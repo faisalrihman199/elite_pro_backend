@@ -1,0 +1,434 @@
+#!/usr/bin/env node
+
+/**
+ * Module dependencies.
+ */
+
+
+
+var app = require('../app');
+var debug = require('debug')('aps-emp-sys:server');
+var http = require('http');
+var db = require('../config/db')
+const WebSocket = require('ws');
+const model = require('../models')
+const jwt = require('jsonwebtoken'); // For token validation
+const { Op } = require('sequelize');
+const sequelize = require('../config/db'); // Import your sequelize instance
+require('dotenv').config()
+
+/**
+ * Get port from environment and store in Express.
+ */
+
+var port = normalizePort(process.env.PORT || '3000');
+app.set('port', port);
+
+/**
+ * Create HTTP server.
+ */
+
+var server = http.createServer(app);
+// Create WebSocket server
+const wss = new WebSocket.Server({ server });
+
+// Store connected clients
+let clients = {};
+
+// Function to verify JWT
+const verifyToken = (token) => {
+  try {
+    return jwt.verify(token, process.env.JWT_SECRET);
+  } catch (err) {
+    return null;
+  }
+};
+
+
+// WebSocket connection handler
+wss.on('connection', async (ws, req) => {
+  // Extract token from query params
+  const token = new URL(req.url, `http://${req.headers.host}`).searchParams.get('token');
+
+  // Verify the token
+  const user = verifyToken(token);
+  if (!user) {
+    ws.send(JSON.stringify({ message: 'Invalid or missing token. Connection denied.' }));
+    return ws.close();
+  }
+
+  const clientId = user.id;
+  clients[clientId] = ws;
+  console.log(`New client connected: ${clientId}`);
+
+  // Set user's last_seen to "Online" on connection
+  await updateUserLastSeen(clientId, 'Online');
+
+  broadcastToOthers(clientId, JSON.stringify({ action: 'userOnline', userId: clientId }));
+  const msgCount = await getUnreadMessagesCount(clientId);
+  console.log("mesg count is ", msgCount);
+
+  if (msgCount.length > 0) {
+    // Check if there are any unread messages
+    const unreadCount = msgCount.reduce((acc, conversation) => acc + conversation.unreadMessages, 0);
+
+    if (unreadCount > 0) {
+      ws.send(JSON.stringify({
+        action: 'unread_messages_count',
+        message: `You have ${unreadCount} unread messages.`,
+        data: msgCount // Include the detailed counts if needed
+      }));
+    } else {
+      ws.send(JSON.stringify({
+        action: 'unread_messages_count',
+        message: 'You have no unread messages.',
+        data: msgCount // Optional, include if you want to send message counts even when unread is zero
+      }));
+    }
+  } else {
+    ws.send(JSON.stringify({
+      action: 'unread_messages_count',
+      message: 'You have no conversations.',
+    }));
+  }
+  await updateMessageStatusToDelivered(clientId);
+
+  // Send acknowledgment to the client
+  ws.send(JSON.stringify({ message: 'Connected to WebSocket server', clientId }));
+
+  // Handle incoming messages
+  ws.on('message', async (data) => {
+    try {
+      const { action, content, senderId, receiverId, groupChatId } = JSON.parse(data);
+
+      if (action === 'sendMessage') {
+        if (groupChatId) {
+          await handleSendGroupMessage(senderId, groupChatId, content);
+        } else {
+          await handleSendMessage(senderId, receiverId, content);
+        }
+      }
+    } catch (error) {
+      console.error('Invalid message format:', error);
+    }
+  });
+
+  // Handle client disconnection
+  ws.on('close', async () => {
+    console.log(`Client ${clientId} disconnected`);
+    delete clients[clientId];
+
+    // Update user's last_seen to the current timestamp on disconnection
+    await updateUserLastSeen(clientId, new Date().toISOString());
+  });
+});
+
+const updateMessageStatusToDelivered = async (clientId) => {
+  try {
+    // Step 1: Fetch messages with status 'sent' for the receiver
+    const messagesToUpdate = await model.message.findAll({
+      where: {
+        receiverId: clientId,
+        status: 'sent', // Only fetch messages that are still 'sent'
+      },
+    });
+
+    // If no messages found, log and exit early
+    if (messagesToUpdate.length === 0) {
+      console.log(`No messages found to update for user ${clientId}`);
+      return;
+    }
+
+    // Step 2: Extract message IDs for updating and format the data
+    const messageIds = messagesToUpdate.map(msg => msg.id);
+
+    // Step 3: Update fetched messages to 'delivered'
+    await model.message.update(
+      { status: 'delivered' }, // Set status to 'delivered'
+      {
+        where: {
+          id: messageIds,
+        },
+      }
+    );
+
+    // Step 4: Format the updated messages into the required data format
+    const messageData = messagesToUpdate.map(msg => ({
+      id: msg.id,
+      conversation_id: msg.conversationId,
+      sender_id: msg.senderId,
+      receiver_id: msg.receiverId,
+      status: 'delivered', // Updated status
+      created_at: msg.createdAt.toISOString(),
+    }));
+
+    // Step 5: Send a message to the receiver notifying them of the status update
+    if (clients[clientId]) { // Check if the receiver is connected
+      clients[clientId].send(
+        JSON.stringify({
+          action: 'messageStatusUpdated',
+          messages: messageData, // Send the updated messages data
+        })
+      );
+    }
+
+    console.log(`Updated ${messagesToUpdate.length} messages to 'delivered' for user ${clientId}`);
+  } catch (error) {
+    console.error('Error updating message status:', error);
+  }
+};
+
+// Function to update user's last_seen field
+const updateUserLastSeen = async (userId, value) => {
+  try {
+    await model.user.update(
+      { last_seen: value },
+      { where: { id: userId } }
+    );
+    console.log(`User ${userId} last_seen updated to: ${value}`);
+  } catch (error) {
+    console.error(`Failed to update last_seen for user ${userId}:`, error);
+  }
+};
+
+// Function to broadcast messages to all clients except the sender
+const broadcastToOthers = (senderId, message) => {
+  Object.entries(clients).forEach(([clientId, client]) => {
+    if (clientId != senderId && client.readyState === WebSocket.OPEN) {
+      console.log(`${clientId} is online`);
+      client.send(message);
+    }
+  });
+};
+
+const getUnreadMessagesCount = async (userId) => {
+  try {
+    // Fetch unread messages count grouped by conversationId and senderId
+    const unreadMessages = await model.message.findAll({
+      where: {
+        receiverId: userId,
+        status: {
+          [Op.in]: ['sent', 'delivered']
+        }
+      },
+      attributes: [
+        'conversationId',
+        'senderId',
+        [sequelize.fn('COUNT', sequelize.col('id')), 'unreadCount']
+      ],
+      group: ['conversationId', 'senderId']
+    });
+
+    // Format the results into an array of objects
+    const unreadCounts = unreadMessages.map((msg) => ({
+      conversationId: msg.conversationId,
+      senderId: msg.senderId,
+      unreadMessages: msg.getDataValue('unreadCount')
+    }));
+
+    return unreadCounts;
+
+  } catch (error) {
+    console.error('Error fetching unread messages count:', error);
+    return [];
+  }
+};
+
+
+// Handle sending messages
+const handleSendMessage = async (senderId, receiverId, content) => {
+  try {
+    // Step 1: Check if the conversation already exists
+    let conversation = await model.conversation.findOne({
+      where: {
+        [Op.or]: [
+          { user1Id: senderId, user2Id: receiverId },
+          { user1Id: receiverId, user2Id: senderId },
+        ],
+      },
+    });
+
+    // Step 2: If no conversation exists, create a new one
+    if (!conversation) {
+      conversation = await model.conversation.create({
+        user1Id: senderId,
+        user2Id: receiverId,
+      });
+    }
+
+    // Step 3: Check the recipient's last seen status
+    const recipient = await model.user.findOne({
+      where: { id: receiverId },
+      attributes: ['last_seen'], // Only fetch the last_seen field
+    });
+
+    // Determine the message status based on recipient's online status
+    const messageStatus = recipient?.last_seen === 'Online' ? 'delivered' : 'sent';
+    console.log(`message status is ${messageStatus}`);
+    // Step 4: Create a new message with the appropriate status
+    const message = await model.message.create({
+      message: content,
+      senderId,
+      receiverId,
+      conversationId: conversation.id,
+      status: messageStatus, // Set status based on recipient's last_seen
+    });
+
+    // Step 5: Update the conversation's lastMessageId with the new message ID
+    const updatedconv = await model.conversation.update(
+      { lastMessageId: message.id },
+      { where: { id: conversation.id } }
+    );
+
+    console.log("updated conv is ", updatedconv);
+
+    // Step 5: Notify the receiver if they are online (i.e., connected via WebSocket)
+    if (clients[receiverId]) {
+      clients[receiverId].send(
+        JSON.stringify({ action: 'receiveMessage', message })
+      );
+    }
+
+    // Optionally, notify the sender that the message was sent
+    if (clients[senderId]) {
+      clients[senderId].send(
+        JSON.stringify({ action: 'messageSent', message })
+      );
+    }
+
+    // Log the message status for debugging
+    console.log(
+      `Message sent from user ${senderId} to user ${receiverId} with status '${messageStatus}'`
+    );
+  } catch (error) {
+    console.error('Error handling message:', error);
+  }
+};
+
+
+const handleSendGroupMessage = async (senderId, groupChatId, content) => {
+
+  try {
+
+    const user = await model.user.findOne({
+      where: { id: senderId },
+     
+    });
+    const company = await model.company.findOne({
+      where: { userId: user.id },
+    });
+    
+    const employee = await model.employee.findOne({
+      where: { companyId: company.id },
+      attributes: ['id'],
+    });
+
+
+    // Check if sender is part of the group
+    const membership = await model.groupChatMembership.findOne({
+      where: { groupChatId, employeeId: employee.id },
+    });
+
+    if (!membership) {
+      console.error(`User ${senderId} is not part of group chat ${groupChatId}`);
+      return;
+    }
+
+    // Create a new group message
+    const message = await model.groupChatMessage.create({
+      groupChatId,
+      senderId:employee.id,
+      message: content,
+      status: 'sent', // Initial status
+    });
+
+    // Notify all group members
+    const members = await model.groupChatMembership.findAll({
+      where: { groupChatId },
+      attributes: ['employeeId'],
+    });
+
+    members.forEach(({ employeeId }) => {
+      if (clients[employeeId]) {
+        clients[employeeId].send(
+          JSON.stringify({
+            action: 'receiveGroupMessage',
+            groupChatId,
+            message,
+          })
+        );
+      }
+    });
+
+    console.log(`Message sent to group chat ${groupChatId} by user ${senderId}`);
+  } catch (error) {
+    console.error('Error handling group message:', error);
+  }
+};
+
+
+
+server.listen(port);
+server.on('error', onError);
+server.on('listening', onListening);
+db.sync()
+
+/**
+ * Normalize a port into a number, string, or false.
+ */
+
+function normalizePort(val) {
+  var port = parseInt(val, 10);
+
+  if (isNaN(port)) {
+    // named pipe
+    return val;
+  }
+
+  if (port >= 0) {
+    // port number
+    return port;
+  }
+
+  return false;
+}
+
+/**
+ * Event listener for HTTP server "error" event.
+ */
+
+function onError(error) {
+  if (error.syscall !== 'listen') {
+    throw error;
+  }
+
+  var bind = typeof port === 'string'
+    ? 'Pipe ' + port
+    : 'Port ' + port;
+
+  // handle specific listen errors with friendly messages
+  switch (error.code) {
+    case 'EACCES':
+      console.error(bind + ' requires elevated privileges');
+      process.exit(1);
+      break;
+    case 'EADDRINUSE':
+      console.error(bind + ' is already in use');
+      process.exit(1);
+      break;
+    default:
+      throw error;
+  }
+}
+
+/**
+ * Event listener for HTTP server "listening" event.
+ */
+
+function onListening() {
+  var addr = server.address();
+  var bind = typeof addr === 'string'
+    ? 'pipe ' + addr
+    : 'port ' + addr.port;
+  debug('Listening on ' + bind);
+}
