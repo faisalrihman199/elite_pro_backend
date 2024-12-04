@@ -34,6 +34,10 @@ const Module = sequelize.define("module", {
     completionFile:{
         type:DataTypes.TEXT,
         allowNull:true
+    },
+    requirementFile:{
+        type:DataTypes.TEXT,
+        allowNull:true
     }
 }, {
     timestamps: true,

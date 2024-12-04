@@ -1,88 +1,76 @@
+const Sequelize = require('sequelize');
 const model = require('../models');
 
 exports.getEmployeeInfo = async (req, res) => {
     try {
         const user = req.user;
 
-        // Check if the user's role is 'employee'
-        if (user.role !== 'employee') {
+        // Ensure the user has the 'employee' role
+        if (user.role !== "employee") {
             return res.status(401).json({ success: false, message: "Unauthorized" });
         }
 
-        // Fetch the employee data along with related teams, projects, and tasks
-        const employee = await model.employee.findOne({
-            where: { userId: user.id },
-            attributes: { exclude: ['createdAt', 'updatedAt'] },
-            include: [
-                {
-                    model: model.teamMembership,
-                    attributes: ["teamId"], // Don't include any attributes from teamMembership
-                    include: {
-                        model: model.team,
-                        attributes: { exclude: ['createdAt', 'updatedAt'] },
-                        include: {
-                            model: model.projectTeamAssignment,
-                            attributes: ['projectId'],
-                            include: {
-                                model: model.project,
-                                attributes: { exclude: ['createdAt', 'updatedAt'] }
-                            }
-                        }
-                    }
-                },
-                {
-                    model: model.task,
-                    attributes: { exclude: ['createdAt', 'updatedAt'] },
-                    include: {
-                        model: model.modules,
-                        attributes: { exclude: ['createdAt', 'updatedAt'] }
-                    }
-                }
-            ]
+        // Fetch total modules count for the employee
+        const totalModulesCount = await model.modules.count({
+            include: [{
+                model: model.employee,
+                where: { id: user.id },
+            }],
         });
 
-        // If no employee found, return an error message
-        if (!employee) {
-            return res.status(404).json({ success: false, message: "Employee not found" });
-        }
-
-        // Prepare a custom response with flattened structure
-        const teams = employee.teamMemberships.map(teamMembership => {
-            const teamData = teamMembership.Team;
-            const projects = teamMembership.Team.projectTeamAssignments.map(assignment => assignment.project);
-            return {
-                teamId: teamData.id,
-                teamName: teamData.name,
-                teamDescription: teamData.description,
-                projects: projects.map(project => ({
-                    projectId: project.id,
-                    projectName: project.name,
-                    projectDescription: project.description,
-                    projectBudget: project.budget,
-                    projectStatus: project.status
-                }))
-            };
+        // Fetch running modules count (completionPercentage < 100 and endDate not exceeded)
+        const runningModulesCount = await model.modules.count({
+            include: [{
+                model: model.employee,
+                where: { id: user.id },
+            }],
+            where: {
+                [Sequelize.Op.or]: [
+                    { completionPercentage: { [Sequelize.Op.lt]: 100 } }, // Progress less than 100
+                    { completionPercentage: null }, // Completion percentage is null
+                ],
+                endDate: { [Sequelize.Op.gt]: new Date() }, // End date is not exceeded
+            },
         });
 
-        // Delete the original teamMemberships field after transforming the data
-        delete employee['teamMemberships'];
+        // Fetch pending modules count (completionPercentage is either 0 or null)
+        const pendingModulesCount = await model.modules.count({
+            include: [{
+                model: model.employee,
+                where: { id: user.id },
+            }],
+            where: {
+                [Sequelize.Op.or]: [
+                    { completionPercentage: { [Sequelize.Op.eq]: 0 } }, // Progress 0
+                    { completionPercentage: null }, // Completion percentage is null
+                ],
+            },
+        });
 
-        // Return the employee info with all their teams and projects
+        // Fetch the running modules (with progress < 100 and end date not exceeded)
+        const runningModules = await model.modules.findAll({
+            include: [{
+                model: model.employee,
+                where: { id: user.id },
+            }],
+            where: {
+                
+                endDate: { [Sequelize.Op.gt]: new Date() }, // End date not exceeded
+            },
+        });
+
         return res.status(200).json({
             success: true,
-            data: { 
-                ...employee.toJSON(), 
-                teamMemberships:null,
-                teams 
-            }
+            message: "Employee module counts fetched successfully",
+            data: {
+                totalModulesCount,
+                runningModulesCount,
+                pendingModulesCount,
+                runningModules, // Include the running modules as requested
+            },
         });
-
     } catch (error) {
-        // Handle errors gracefully and log them if necessary
-        console.error("Error fetching employee info:", error);
+        console.error("Error fetching module counts:", error);
         return res.status(500).json({ success: false, message: "Internal Server Error" });
     }
 };
-
-
-

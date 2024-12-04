@@ -17,6 +17,7 @@ const groupChatMembership = require("./groupChatMembership");
 const groupChatMessage = require("./groupChatMessage");
 const teamTaskAssignment = require("./teamTaskAssigment");
 const employeeModuleAssignment = require("./employeeModuleAssignment");
+const notification = require("./notification");
 const models = { 
   user, 
   employee, 
@@ -25,7 +26,7 @@ const models = {
   project, 
  
   task, 
- 
+  notification,
   modules, 
   message, 
   conversation,
@@ -64,6 +65,23 @@ groupChat.hasMany(groupChatMessage,{
 groupChatMessage.belongsTo(groupChat,{foreignKey: "groupChatId",})
 
 
+user.hasMany(notification, {
+  onDelete: "CASCADE", 
+  onUpdate: "CASCADE",
+  foreignKey: "userId",
+});
+notification.belongsTo(user, { foreignKey: "userId" });
+
+
+// Association in teamMembership to employee
+teamMembership.belongsTo(employee, {
+  foreignKey: 'employeeId',
+});
+
+// Association in teamMembership to team
+teamMembership.belongsTo(team, {
+  foreignKey: 'teamId',
+});
 
 
 

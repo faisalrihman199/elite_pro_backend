@@ -8,5 +8,7 @@ router.get('/employeeStats',authmiddleware.authenticate('jwt', { session: false 
 router.get('/projectStats',authmiddleware.authenticate('jwt', { session: false }),controllers.dashBoardStats.projectStats);
 router.get('/taskStats',authmiddleware.authenticate('jwt', { session: false }),controllers.dashBoardStats.taskStats);
 router.get('/moduleStats',authmiddleware.authenticate('jwt', { session: false }),controllers.dashBoardStats.moduleStats);
+router.get('/teamStats',authmiddleware.authenticate('jwt', { session: false }),controllers.dashBoardStats.teamStats);
+
 
 module.exports = router;

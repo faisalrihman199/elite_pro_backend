@@ -1,6 +1,42 @@
 const model = require('../models');
 
 
+
+exports.assignEmployeeToModule = async (req, res) => {
+    const user = req.user;
+    if(req.user.role !== "admin"){
+        return res.status(401).json({ success: false, message: "Unauthorized" });
+    }
+    const { employeeId, moduleId } = req.body;
+    try {
+
+        const existingMembership = await model.employeeModuleAssignment.findOne({where:{moduleId}});
+        if(existingMembership){
+            if(existingMembership.employeeId === employeeId){
+                return res.status(400).json({ success: false, message: "Employee already assigned to module" });
+            }
+            else{
+                existingMembership.employeeId = employeeId;
+                await existingMembership.save();
+                return res.status(200).json({ success: true, message: "Employee updated to module successfully" });
+            }
+        }
+        const employeeModule = await model.employeeModuleAssignment.create({employeeId, moduleId});
+        return res.status(200).json({ success: true, message: "Employee assigned to module successfully" ,
+            data: employeeModule
+
+        });
+    } catch (error) {
+        console.error(error);
+        return res.status(500).json({
+            success: false,
+            message: "An error occurred while assigning employee to module.",
+            error: error.message,
+        });
+    }
+}
+
+
 exports.moduleProgress = async (req, res) => {
     const user = req.user;
     let status = "in-progress";
@@ -8,13 +44,25 @@ exports.moduleProgress = async (req, res) => {
     if (user.role !== "employee") {
         return res.status(401).json({ success: false, message: "Unauthorized" });
     }
+    const employee = await model.employee.findOne({ where: { userId: user.id } });
+    console.log("employee is ", employee.id, req.query.id);
+    const employeeModuleAssignment = await model.employeeModuleAssignment.findOne({
+        where: { employeeId: employee.id, moduleId: req.query.id },
+    })
 
+    if (!employeeModuleAssignment) {
+        return res.status(404).json({ success: false, message: "Employee not assigned to module" });
+    }
+
+     
     try {
         // Find the module
         const module = await model.modules.findByPk(req.query.id);
         if (!module) {
             return res.status(404).json({ success: false, message: "Module not found" });
         }
+
+
 
         // Validate and update completionPercentage
         const { completionPercentage } = req.body;

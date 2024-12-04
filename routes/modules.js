@@ -15,4 +15,7 @@ router.put(
     controllers.modules.moduleProgress
 );
 
+
+router.post("/addEmployeeToModule",authMiddleware.authenticate('jwt', { session: false }),controllers.modules.assignEmployeeToModule);
+
 module.exports = router;
