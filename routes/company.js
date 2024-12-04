@@ -22,5 +22,8 @@ router.post("/forgetPassword",controllers.user.forgetPassword);
 router.post("/verifyForget",controllers.user.verifyForget);
 router.get("/getOneTask",authmiddleware.authenticate('jwt', { session: false }),controllers.user.getOneTask);
 router.get("/getOneProject",authmiddleware.authenticate('jwt', { session: false }),controllers.user.getOneProject);
+router.get("/getAllTasks",authmiddleware.authenticate('jwt', { session: false }),controllers.user.getAllTasksPaginated);
+router.get("/getAllModules",authmiddleware.authenticate('jwt', { session: false }),controllers.user.getAllModulesPaginated);
+router.get("/getOneModule",authmiddleware.authenticate('jwt', { session: false }),controllers.user.getOneModule);
 
 module.exports = router;

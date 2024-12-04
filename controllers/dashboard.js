@@ -721,14 +721,6 @@ exports.projectStats = async (req, res) => {
             chartData: []
         };
 
-        // Helper function to push data into chartData
-        const pushChartData = (name, total, active, completed) => {
-            projectCounts.total.push({ name, value: total });
-            projectCounts.active.push({ name, value: active });
-            projectCounts.completed.push({ name, value: completed });
-            projectCounts.chartData.push({ label: name, value: total });
-        };
-
         if (period === "monthly") {
             // Monthly stats for the last 12 months
             const last12Months = [];
@@ -771,8 +763,10 @@ exports.projectStats = async (req, res) => {
                     },
                 });
 
-                // Push data to chartData
-                pushChartData(last12Months[11 - i], totalCount, activeCount, completedCount);
+                // Store the counts in the response object
+                projectCounts.total.push({ name: last12Months[11 - i], value: totalCount });
+                projectCounts.active.push({ name: last12Months[11 - i], value: activeCount });
+                projectCounts.completed.push({ name: last12Months[11 - i], value: completedCount });
             }
         } else if (period === "weekly") {
             // Weekly stats for the last 4 weeks (returns date ranges)
@@ -811,8 +805,18 @@ exports.projectStats = async (req, res) => {
                     },
                 });
 
-                // Push data to chartData
-                pushChartData(`${weekStart.format("MMM D")} - ${weekEnd.format("MMM D")}`, totalCount, activeCount, completedCount);
+                projectCounts.total.push({
+                    name: `${weekStart.format("MMM D")} - ${weekEnd.format("MMM D")}`,
+                    value: totalCount,
+                });
+                projectCounts.active.push({
+                    name: `${weekStart.format("MMM D")} - ${weekEnd.format("MMM D")}`,
+                    value: activeCount,
+                });
+                projectCounts.completed.push({
+                    name: `${weekStart.format("MMM D")} - ${weekEnd.format("MMM D")}`,
+                    value: completedCount,
+                });
             }
         } else if (period === "daily") {
             // Daily stats for the last 7 days (returns day names like Mon, Tue, etc.)
@@ -851,8 +855,18 @@ exports.projectStats = async (req, res) => {
                     },
                 });
 
-                // Push data to chartData
-                pushChartData(moment(dayStart).format("ddd"), totalCount, activeCount, completedCount);
+                projectCounts.total.push({
+                    name: moment(dayStart).format("ddd"), // Returns day name (e.g., "Mon", "Tue")
+                    value: totalCount,
+                });
+                projectCounts.active.push({
+                    name: moment(dayStart).format("ddd"),
+                    value: activeCount,
+                });
+                projectCounts.completed.push({
+                    name: moment(dayStart).format("ddd"),
+                    value: completedCount,
+                });
             }
         } else if (period === "all") {
             // Yearly stats for the last 10 years, including the current year
@@ -897,8 +911,9 @@ exports.projectStats = async (req, res) => {
                     },
                 });
 
-                // Push data to chartData
-                pushChartData(`${year}`, totalCount, activeCount, completedCount);
+                projectCounts.total.push({ name: `${year}`, value: totalCount });
+                projectCounts.active.push({ name: `${year}`, value: activeCount });
+                projectCounts.completed.push({ name: `${year}`, value: completedCount });
             }
         } else {
             return res.status(400).json({
@@ -906,6 +921,18 @@ exports.projectStats = async (req, res) => {
                 message: "Invalid period. Allowed values are 'monthly', 'weekly', 'daily', or 'all'.",
             });
         }
+
+        // Fixing chartData to summarize the totals for total, active, and completed projects
+        const totalProjectsCount = projectCounts.total.reduce((sum, val) => sum + val.value, 0);
+        const activeProjectsCount = projectCounts.active.reduce((sum, val) => sum + val.value, 0);
+        const completedProjectsCount = projectCounts.completed.reduce((sum, val) => sum + val.value, 0);
+
+        // Updating chartData with the fixed format
+        projectCounts.chartData = [
+            { label: "Total Projects", value: totalProjectsCount },
+            { label: "Active Projects", value: activeProjectsCount },
+            { label: "Completed Projects", value: completedProjectsCount },
+        ];
 
         // Return the results in both the chartData format and the name-count format
         return res.status(200).json({
@@ -980,7 +1007,6 @@ exports.taskStats = async (req, res) => {
         const TotalTasks = await model.task.count({
             where: {
                 projectId: { [Op.in]: projectIds },
-               
             }
         });
 
@@ -989,7 +1015,6 @@ exports.taskStats = async (req, res) => {
             where: {
                 projectId: { [Op.in]: projectIds },
                 status: 'active',
-                
             }
         });
 
@@ -997,8 +1022,7 @@ exports.taskStats = async (req, res) => {
         const TotalCompletedTasks = await model.task.count({
             where: {
                 projectId: { [Op.in]: projectIds },
-                status: 'completed'
-               
+                status: 'completed',
             }
         });
 
@@ -1073,6 +1097,30 @@ exports.taskStats = async (req, res) => {
             }
         }
 
+        // Add chartData for summary (Total Tasks, Active Tasks, Completed Tasks)
+        const totalTaskCount = taskCounts.reduce((sum, val) => sum + val.value, 0);
+        const activeTaskCount = await model.task.count({
+            where: {
+                projectId: { [Op.in]: projectIds },
+                status: 'active',
+                createdAt: dateRange
+            }
+        });
+        const completedTaskCount = await model.task.count({
+            where: {
+                projectId: { [Op.in]: projectIds },
+                status: 'completed',
+                createdAt: dateRange
+            }
+        });
+
+        // Adding summary chart data
+        const chartData = [
+            { label: "Total Tasks", value: totalTaskCount },
+            { label: "Active Tasks", value: activeTaskCount },
+            { label: "Completed Tasks", value: completedTaskCount },
+        ];
+
         return res.status(200).json({
             success: true,
             message: 'Task stats fetched successfully',
@@ -1080,7 +1128,8 @@ exports.taskStats = async (req, res) => {
                 TotalTasks,
                 TotalActiveTasks,
                 TotalCompletedTasks,
-                taskCounts
+                taskCounts,
+                chartData // Return the chartData for summary
             }
         });
 
@@ -1174,6 +1223,14 @@ exports.moduleStats = async (req, res) => {
 
         // Module counts for the specified period
         let moduleCounts = [];
+        let chartData = [];
+
+        // Collecting the task stats in a similar format
+        chartData.push({ label: 'Total Modules', value: TotalModules });
+        chartData.push({ label: 'Active Modules', value: TotalActiveModules });
+        chartData.push({ label: 'Completed Modules', value: TotalCompletedModules });
+
+        // Generate daily, weekly, monthly or yearly module counts based on the period
         if (period === 'daily') {
             // Daily stats for the last 7 days
             for (let i = 6; i >= 0; i--) {
@@ -1250,7 +1307,8 @@ exports.moduleStats = async (req, res) => {
                 TotalModules,
                 TotalActiveModules,
                 TotalCompletedModules,
-                moduleCounts
+                moduleCounts,
+                chartData // Include the chart data in the response
             }
         });
 
@@ -1259,6 +1317,7 @@ exports.moduleStats = async (req, res) => {
         return res.status(500).json({ success: false, message: error.message });
     }
 };
+
 
 
 
