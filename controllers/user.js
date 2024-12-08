@@ -787,7 +787,7 @@ exports.addTaskToProject = async (req, res) => {
       projectId,
       teamId,
     } = req.body;
-    const { taskId } = req.query; // Get taskId from params if it's provided
+    const  taskId  = req.query.id; // Get taskId from params if it's provided
   
     try {
       const status1 = status || "active";
@@ -803,7 +803,7 @@ exports.addTaskToProject = async (req, res) => {
   
       // Validate project existence and ownership
       const existingProject = await model.project.findOne({
-        where: { id: projectId },
+
         include: {
           model: model.company,
           where: { userId: authUser.id }, // Ensure the project belongs to the authenticated user's company
@@ -817,11 +817,10 @@ exports.addTaskToProject = async (req, res) => {
         });
       }
   
-      // Handle task update or creation
       let task;
       if (taskId) {
-        // Update existing task if taskId is provided
-        task = await model.task.findOne({ where: { id: taskId, projectId } });
+        // Update existing task
+        task = await model.task.findOne({ where: { id: taskId} });
   
         if (!task) {
           return res.status(404).json({
@@ -844,10 +843,31 @@ exports.addTaskToProject = async (req, res) => {
   
         await task.save(); // Save the updated task
   
+        // Check if the `teamId` has changed
+        const existingAssignment = await model.teamTaskAssignment.findOne({
+          where: { taskId },
+        });
+  
+        if (!existingAssignment || existingAssignment.teamId !== teamId) {
+          // Update or create `teamTaskAssignment`
+          if (existingAssignment) {
+            await existingAssignment.update({ teamId });
+          } else {
+            await model.teamTaskAssignment.create({ teamId, taskId });
+          }
+  
+          // Create a new group chat for the updated team
+          const newGroupChat = await model.groupChat.create({
+            name: `${task.name} - ${team.name}`,
+          });
+  
+          // Update group memberships and notifications for the new team
+          await handleGroupMembershipsAndNotifications(teamId, newGroupChat.id, task.name);
+        }
       } else {
-        // Create a new task if no taskId is provided
+        // Create new task
         const existingTask = await model.task.findOne({
-          where: { name, projectId },
+          where: { name },
         });
   
         if (existingTask) {
@@ -884,77 +904,25 @@ exports.addTaskToProject = async (req, res) => {
           },
           { raw: true }
         );
+  
+        // Create `teamTaskAssignment` for the new task
+        await model.teamTaskAssignment.create({ teamId, taskId: task.id });
+  
+        // Create `groupChat` for the new task
+        const groupChat = await model.groupChat.create({
+          name: `${name} - ${team.name}`,
+        });
+  
+        // Retrieve team members and create memberships
+        await handleGroupMembershipsAndNotifications(teamId, groupChat.id, name);
       }
   
-      // Associate task with the team
-      await model.teamTaskAssignment.create({ teamId, taskId: task.id });
-  
-      // Create group chat for the task and team
-      const groupChat = await model.groupChat.create({
-        name: `${name} - ${team.name}`,
-      });
-  
-      // Retrieve team members with their associated user emails
-      const teamMemberships = await model.teamMembership.findAll({
-        where: { teamId }, // Filter by the specific team ID
-        attributes: ["employeeId"], // Retrieve employeeId from the teamMembership table
-        include: [
-          {
-            model: model.employee, // Join with the Employee model
-            include: [
-              {
-                model: model.user, // Join with the User model to fetch the email
-                attributes: ["email"], // Retrieve email from the User model
-              },
-            ],
-          },
-        ],
-      });
-  
-      const employees = teamMemberships.map((membership) => ({
-        employeeId: membership.employeeId,
-        userId: membership.employee.userId,
-        email: membership.employee.user.email, // Email is retrieved from the User model
-      }));
-  
-      // Prepare group chat memberships and notifications
-      const memberships = employees.map(({ employeeId }) => ({
-        groupChatId: groupChat.id,
-        employeeId,
-      }));
-  
-      const notifications = employees.map(({ userId }) => ({
-        notificationType: "group_chat",
-        content: `You have been added to the group chat for the task: ${name}`,
-        userId,
-      }));
-  
-      // Bulk create group chat memberships and notifications
-      await model.groupChatMembership.bulkCreate(memberships);
-      await model.notification.bulkCreate(notifications);
       task.teamId = teamId;
-      // Respond immediately
       res.status(201).json({
         success: true,
         message: taskId ? "Task updated successfully." : "Task added successfully to the project.",
-        data: {
-          task,
-          teamId,
-        },
+        data: { task, teamId },
       });
-  
-      // Send emails asynchronously after the response
-      const emailPromises = employees.map(({ email }) =>
-        sendEmail({
-          to: email,
-          subject: `You have been added to a new task: ${name}`,
-          text: `Hello,\n\nYou have been assigned to the task "${name}" as part of the project "${existingProject.name}".\n\nPlease check the details in your account.\n\nBest regards,\nTeam`,
-        })
-      );
-  
-      Promise.all(emailPromises)
-        .then(() => console.log("Emails sent successfully."))
-        .catch((err) => console.error("Error sending emails:", err));
     } catch (error) {
       console.error("Error adding/updating task:", error);
       res.status(500).json({
@@ -964,6 +932,40 @@ exports.addTaskToProject = async (req, res) => {
       });
     }
   };
+  
+  // Helper function to handle group memberships and notifications
+  async function handleGroupMembershipsAndNotifications(teamId, groupChatId, taskName) {
+    const teamMemberships = await model.teamMembership.findAll({
+      where: { teamId },
+      include: [
+        {
+          model: model.employee,
+          include: [{ model: model.user, attributes: ["email","id"] }],
+        },
+      ],
+    });
+    
+    console.log("teamMemberships", teamMemberships);
+    const employees = teamMemberships.map((membership) => ({
+      employeeId: membership.employeeId,
+      userId: membership.employee.user.id,
+      email: membership.employee.user.email,
+    }));
+  
+    const memberships = employees.map(({ employeeId }) => ({
+      groupChatId,
+      employeeId,
+    }));
+  
+    const notifications = employees.map(({ userId }) => ({
+      notificationType: "group_chat",
+      content: `You have been added to the group chat for the task: ${taskName}`,
+      userId,
+    }));
+  
+    await model.groupChatMembership.bulkCreate(memberships);
+    await model.notification.bulkCreate(notifications);
+  }
   
 exports.getOneTask = async (req, res) => {
   const user = req.user;
@@ -1292,7 +1294,7 @@ exports.addModuleForTask = async (req, res) => {
   console.log("inside add module:", req);
 
   const {
-    moduleId,
+   
     name,
     description,
     status,
@@ -1301,18 +1303,14 @@ exports.addModuleForTask = async (req, res) => {
     taskId,
     employeeId,
   } = req.body;
+  const  moduleId = req.query.id
   const file = req.file; // Handle the single uploaded file
 
   console.log("body is", req.body);
   console.log("name is", name);
   console.log("taskId is", taskId);
 
-  if (!taskId || !name) {
-    return res.status(400).json({
-      success: false,
-      message: "Task ID and Module name are required.",
-    });
-  }
+ 
 
   // Utility function to get the relative path for the file
   const getRelativePath = (filePath) => filePath.split("public")[1]; // Extract the part after "public"
@@ -1324,7 +1322,7 @@ exports.addModuleForTask = async (req, res) => {
       const existingModule = await model.modules.findOne({
         where: {
           id: moduleId,
-          taskId: taskId, // Ensure the module belongs to the correct task
+         
         },
       });
 
@@ -1362,6 +1360,13 @@ exports.addModuleForTask = async (req, res) => {
         module: updatedModule,
       });
     }
+
+    if (!taskId || !name) {
+        return res.status(400).json({
+          success: false,
+          message: "Task ID and Module name are required.",
+        });
+      }
 
     // If moduleId is not provided, create a new module for the task
     const newModule = await model.modules.create({
@@ -1476,91 +1481,113 @@ exports.getAllTasksPaginated = async (req, res) => {
     }
 };
 
+
+
 exports.getAllModulesPaginated = async (req, res) => {
-    const user = req.user;
-    
-    // Check if the user is an admin
-    if (user.role !== 'admin') {
-        return res.status(401).json({ success: false, message: "You are not authorized to perform this action." });
-    }
+    const user = req.user; // Get the user object
+    let { employeeId, page = 1, pageSize = 10 } = req.query;
+    page = parseInt(page, 10);
+    pageSize = parseInt(pageSize, 10);
+    const offset = (page - 1) * pageSize;
 
     try {
-        // Find the company associated with the admin
-        const company = await model.company.findOne({ where: { userId: user.id } });
-
-        if (!company) {
-            return res.status(404).json({ success: false, message: "Company not found for the user." });
-        }
-
-        // Get all project IDs associated with the company
-        const projects = await model.project.findAll({
-            where: { companyId: company.id },
-            attributes: ['id'], // Only fetch project IDs
-            raw: true
-        });
-
-        const projectIds = projects.map(project => project.id);
-
-        if (projectIds.length === 0) {
-            return res.status(404).json({ success: false, message: "No projects found for this company." });
-        }
-
-        // Get all task IDs for the company's projects
-        const tasks = await model.task.findAll({
-            where: { projectId: { [Op.in]: projectIds } },
-            attributes: ['id'], // Only fetch task IDs
-            raw: true
-        });
-
-        const taskIds = tasks.map(task => task.id);
-
-        if (taskIds.length === 0) {
-            return res.status(404).json({ success: false, message: "No tasks found for this company." });
-        }
-
-        // Destructure pagination parameters from query (with defaults)
-        const { page = 1, limit = 10 } = req.query;
-        const offset = (page - 1) * limit;
-        const moduleLimit = parseInt(limit, 10);
-
-        // Get modules for the company's tasks, apply pagination
-        const modules = await model.modules.findAll({
-            attributes: ['id', 'name','endDate', 'status', ], // Adjust attributes as necessary
-            where: {
-                taskId: { [Op.in]: taskIds }
-            },
-            limit: moduleLimit,
-            offset: offset,
-            order: [['createdAt', 'DESC']] // Optional: order by created date
-        });
-
-        // Count the total modules for the company's tasks
-        const totalModules = await model.modules.count({
-            where: {
-                taskId: { [Op.in]: taskIds }
+        // If the token belongs to an employee, override employeeId with the logged-in employee's ID
+        if (user.role === 'employee') {
+            const employee = await model.employee.findOne({ where: { userId: user.id } });
+            if (!employee) {
+                return res.status(404).json({ success: false, message: "Employee not found." });
             }
+            employeeId = employee.id; // Force the employeeId to the logged-in employee
+        }
+
+        // Validate the provided employeeId for admin token
+        if (user.role === 'admin' && employeeId) {
+            const employee = await model.employee.findOne({ where: { id: employeeId } });
+            if (!employee) {
+                return res.status(404).json({ success: false, message: "Employee not found." });
+            }
+        }
+
+        // If no employeeId is provided for admin, fetch modules for the entire company
+        let whereClause = {};
+        let include = [];
+
+        if (employeeId) {
+            // Fetch modules specific to an employee
+            include.push({
+                model: model.employee,
+                where: { id: employeeId }, // Join with employee table
+                attributes: [] // Exclude employee details from the result
+            });
+        } else if (user.role === 'admin') {
+            // Fetch modules for the admin's company
+            const company = await model.company.findOne({ where: { userId: user.id } });
+            if (!company) {
+                return res.status(404).json({ success: false, message: "Company not found for the user." });
+            }
+
+            // Get all project IDs for the company
+            const projects = await model.project.findAll({
+                where: { companyId: company.id },
+                attributes: ['id'],
+                raw: true
+            });
+
+            const projectIds = projects.map(project => project.id);
+
+            if (projectIds.length === 0) {
+                return res.status(404).json({ success: false, message: "No projects found for this company." });
+            }
+
+            // Get all task IDs for the company's projects
+            const tasks = await model.task.findAll({
+                where: { projectId: { [Op.in]: projectIds } },
+                attributes: ['id'],
+                raw: true
+            });
+
+            const taskIds = tasks.map(task => task.id);
+
+            if (taskIds.length === 0) {
+                return res.status(404).json({ success: false, message: "No tasks found for this company." });
+            }
+
+            whereClause = { taskId: { [Op.in]: taskIds } }; // Filter by tasks
+        }
+
+        // Fetch paginated modules
+        const modules = await model.modules.findAll({
+            where: whereClause,
+            include: include,
+            offset: offset,
+            limit: pageSize,
+            order: [['startDate', 'DESC']] // Order by startDate
+        });
+
+        // Count total modules
+        const totalModules = await model.modules.count({
+            where: whereClause,
+            include: include
         });
 
         // Calculate total pages
-        const totalPages = Math.ceil(totalModules / moduleLimit);
+        const totalPages = Math.ceil(totalModules / pageSize);
 
-        // Return paginated modules
+        // Return paginated response
         return res.status(200).json({
             success: true,
             message: "Modules fetched successfully.",
             data: {
                 modules,
-               
-                    currentPage: page,
-                    totalPages,
-                    totalModules,
-                    limit: moduleLimit
-                
+                currentPage: page,
+                totalPages,
+                totalModules,
+                pageSize
             }
         });
     } catch (error) {
         console.error("Error fetching modules:", error);
-        return res.status(500).json({ success: false, message: error.message });
+        return res.status(500).json({ success: false, message: "Internal Server Error" });
     }
 };
 
@@ -1598,5 +1625,26 @@ exports.getOneModule = async (req, res) => {
     } catch (error) {
         console.error("Error fetching module:", error);
         return res.status(500).json({ success: false, message: "Internal Server Error" });
+    }
+}
+
+exports.getUserdata = async (req, res) => {
+    const user = req.user;
+    const role = user.role;
+    if (role === "admin") {
+       const user1  = await model.user.findByPk(user.id, {
+        include:{
+            model:model.company,
+        }
+       })
+       return res.status(200).json({ success: true, message: "User data fetched successfully", data: user1 });
+    }
+    if (user.role === "employee") {
+        const user2  = await model.user.findByPk(user.id, {
+            include:{
+                model:model.employee,
+            }
+           })
+           return res.status(200).json({ success: true, message: "User data fetched successfully", data: user2 });
     }
 }

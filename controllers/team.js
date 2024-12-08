@@ -133,9 +133,11 @@ exports.getOneteam = async (req, res) => {
       // Fetch the team along with employees
       const team = await model.team.findOne({
           where: { id: teamId },
-          include: {
+          include:[ {
               model: model.employee,
-          },
+          }
+        ]
+          
       });
 
       if (!team) {
@@ -199,7 +201,8 @@ exports.fetchTeamsForCompany = async (req, res) => {
             
           },
         });
-
+        console.log("teamMembers", teamMembers)
+       
         // Map the team data to include employees
         const employees = teamMembers.map((membership) => ({
           id: membership.employee.id,
@@ -249,12 +252,13 @@ exports.fetchTeamsForCompany = async (req, res) => {
     if(user.role !== 'admin') {
         return res.status(401).json({message: 'You are not authorized to delete a team'})
     }
+    const company = await model.company.findOne({where: {userId: user.id}})
     const {teamId} = req.params
     if(!teamId) {
         return res.status(400).json({message: 'Team id is required'})
     }
     try {
-        const team = await model.team.findOne({where: {id: teamId,companyId: user.id}})
+        const team = await model.team.findOne({where: {id: teamId,companyId: company.id}})
         if(!team) {
             return res.status(404).json({success: false, message: 'Team not found'})
         }
@@ -329,12 +333,13 @@ exports.fetchTeamsForCompany = async (req, res) => {
         if(req.user.role !== 'admin') {
             return res.status(401).json({message: 'You are not authorized to remove employee from a team'})
         }
+        const company = await model.company.findOne({where: {userId: userId}})
         const {teamId, employeeId} = req.body
         if(!teamId || !employeeId) {
             return res.status(400).json({message: 'teamId and employeeId are required'})
         }
         try {
-            const team = await model.team.findOne({where: {id: teamId,companyId: userId}})
+            const team = await model.team.findOne({where: {id: teamId,companyId: company.id}})
             if(!team) {
                 return res.status(404).json({success: false, message: 'Team not found'})
             }
@@ -342,6 +347,7 @@ exports.fetchTeamsForCompany = async (req, res) => {
             if(!employee) {
                 return res.status(404).json({success: false, message: 'Employee not found'})
             }
+            const existingModuleAssignment = await model.employeeModuleAssignment
             const existingMembership = await model.teamMembership.findOne({where: {teamId,employeeId}})
             if(!existingMembership) {
                 return res.status(400).json({success: false, message: 'the following employee is not part of any team'})
@@ -461,3 +467,102 @@ exports.fetchTeamsForCompany = async (req, res) => {
       };
       
 
+      exports.getOneTeamDashboard = async (req, res) => {
+        const teamId = req.query.id;
+      
+        try {
+          // Validate `teamId`
+          let team = await model.team.findOne({
+            where: { id: teamId },
+            include: [
+              {
+                model: model.employee,
+              },
+            ],
+          });
+          if (!team) {
+            return res.status(404).json({
+              success: false,
+              message: "Team not found.",
+            });
+          }
+      
+          // Fetch all tasks for the team
+          const allTasks = await model.task.findAll({
+            include: [
+              {
+                model: model.team,
+                through: { attributes: [] }, // Exclude intermediate table attributes
+                where: { id: teamId },
+                include:{
+                  model:model.employee
+
+                }
+              },
+              {
+                model: model.modules,
+                include:{
+                  model:model.employee
+                }
+              },
+            ],
+          });
+      
+          // Separate tasks into `active`, `pending`, and `running` categories
+          const activeTasks = [];
+          const pendingTasks = [];
+          const runningTasks = [];
+      
+          const currentDate = new Date();
+      
+          allTasks.forEach((task) => {
+            const hasCompletedModule = task.modules.some(
+              (module) => module.completionPercentage === 100
+            );
+      
+            // Determine if the task is running
+            const isRunning = task.endDate ? new Date(task.endDate) > currentDate : true;
+      
+            if (isRunning) {
+              runningTasks.push(task);
+            }
+      
+            // Categorize as active or pending
+            if (hasCompletedModule) {
+              activeTasks.push(task);
+            } else {
+              pendingTasks.push(task);
+            }
+          });
+      
+          // Get the total counts
+          const totalActiveTasks = activeTasks.length;
+          const totalPendingTasks = pendingTasks.length;
+          const totalRunningTasks = runningTasks.length;
+      
+          // Convert team to plain object
+          team = team.get({ plain: true });
+      
+          // Response
+          res.status(200).json({
+            success: true,
+            message: "Team dashboard fetched successfully.",
+            data: {
+              totalTasks: allTasks.length, // Total tasks count
+              totalPendingTasks,
+              totalActiveTasks,
+              totalRunningTasks,
+              runningTasks,
+              team
+            },
+          });
+        } catch (error) {
+          console.error("Error fetching team dashboard:", error);
+          res.status(500).json({
+            success: false,
+            message: "An error occurred while fetching the team dashboard.",
+            error: error.message,
+          });
+        }
+      };
+      

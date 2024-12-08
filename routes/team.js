@@ -12,6 +12,6 @@ router.get("/getTeamMembers/:teamId",authmiddleware.authenticate('jwt', { sessio
 router.delete("/removeEmp",authmiddleware.authenticate('jwt', { session: false }),controllers.team.removeEmployeeFromTeam);
 router.post("/addToProject",authmiddleware.authenticate('jwt', { session: false }),controllers.team.addTeamToProject);
 router.delete("/removeFromProject",authmiddleware.authenticate('jwt', { session: false }),controllers.team.removeTeamFromProject);
-
+router.get("/teamDashBoard",authmiddleware.authenticate('jwt', { session: false }),controllers.team.getOneTeamDashboard);
 
 module.exports = router;

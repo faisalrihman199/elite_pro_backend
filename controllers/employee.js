@@ -135,7 +135,7 @@ exports.getAllEmployeeModulesPaginated = async (req, res) => {
             include: [{
                 model: model.employee,
                 where: { id: employeeId },
-                attributes: [] // No need to return employee details in module list
+                attributes: ["id"] // No need to return employee details in module list
             }],
             offset: offset,
             limit: limit,
@@ -171,5 +171,145 @@ exports.getAllEmployeeModulesPaginated = async (req, res) => {
     } catch (error) {
         console.error("Error fetching employee modules:", error);
         return res.status(500).json({ success: false, message: "Internal Server Error" });
+    }
+};
+
+
+exports.deleteEmployee = async (req, res) => {
+    const user = req.user;
+    if (user.role !== "admin") {
+      return res.status(401).json({ success: false, message: "Unauthorized" });
+    }
+  
+    const { oldEmployeeId, newEmployeeId } = req.body;
+  
+    try {
+      // Validate old employee
+      const oldEmployee = await model.employee.findOne({ where: { id: oldEmployeeId } });
+      if (!oldEmployee) {
+        return res.status(404).json({ success: false, message: "Old employee not found." });
+      }
+  
+      // Validate new employee
+      const newEmployee = await model.employee.findOne({ where: { id: newEmployeeId } });
+      if (!newEmployee) {
+        return res.status(404).json({ success: false, message: "New employee not found." });
+      }
+  
+      // Update `employeeId` in employee modules
+      await model.employeeModuleAssignment.update(
+        { employeeId: newEmployeeId },
+        { where: { employeeId: oldEmployeeId } }
+      );
+  
+      // Update `employeeId` in group chat memberships
+      await model.groupChatMembership.update(
+        { employeeId: newEmployeeId },
+        { where: { employeeId: oldEmployeeId } }
+      );
+  
+      // Update `employeeId` in team memberships
+      await model.teamMembership.update(
+        { employeeId: newEmployeeId },
+        { where: { employeeId: oldEmployeeId } }
+      );
+  
+      // Delete the old employee record
+      await model.employee.update({status:"inactive"}, { where: { id: oldEmployeeId } }); // Set status to "inactive" instead of "deleted" });
+  
+      res.status(200).json({
+        success: true,
+        message: `Employee ${oldEmployeeId} has been successfully deleted, and their assignments have been transferred to employee ${newEmployeeId}.`,
+      });
+    } catch (error) {
+      console.error("Error deleting employee:", error);
+      res.status(500).json({
+        success: false,
+        message: "An error occurred while deleting the employee.",
+        error: error.message,
+      });
+    }
+  };
+  
+
+  exports.updateEmployee = async (req, res) => {
+    const user = req.user;
+
+    // Ensure the user has the correct role
+    if (user.role !== 'employee') {
+        return res.status(403).json({
+            success: false,
+            message: "You do not have permission to perform this action."
+        });
+    }
+
+    try {
+        // Find the associated user
+        const foundUser = await model.user.findOne({ where: { id: user.id } });
+        if (!foundUser) {
+            return res.status(404).json({
+                success: false,
+                message: "User not found."
+            });
+        }
+
+        // Find the associated employee record
+        const employee = await model.employee.findOne({ where: { userId: foundUser.id } });
+        if (!employee) {
+            return res.status(404).json({
+                success: false,
+                message: "Employee not found."
+            });
+        }
+
+        // Extract updatable fields from the request body
+        const {
+            firstName,
+            lastName,
+            designation,
+            department,
+            phone,
+            address,
+            cnic,
+            status
+        } = req.body;
+
+        // Handle the uploaded profile image (if provided)
+        let updatedData = {
+            firstName,
+            lastName,
+            designation,
+            department,
+            phone,
+            address,
+            cnic,
+            status
+        };
+
+        if (req.file) {
+            // Get the relative path for the uploaded file
+            const filePath = req.file.path; // This is the full path to the uploaded file
+            const profileImagePath = path.relative(
+                path.join(__dirname, "../public"),
+                filePath
+            ); // Save the relative path for storage
+            updatedData.profile_image = profileImagePath;
+        }
+
+        // Update employee details
+        await employee.update(updatedData);
+
+        return res.status(200).json({
+            success: true,
+            message: "Employee updated successfully.",
+            data: employee
+        });
+    } catch (error) {
+        console.error("Error updating employee:", error);
+        return res.status(500).json({
+            success: false,
+            message: "An error occurred while updating the employee.",
+            error: error.message
+        });
     }
 };

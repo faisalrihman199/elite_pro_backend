@@ -34,6 +34,10 @@ const Employee = sequelize.define("employee", {
     profile_image:{
         type: DataTypes.STRING,
         allowNull: true,
+    },
+    status:{
+        type: DataTypes.ENUM('active', 'inactive'),
+        defaultValue: 'active',
     }
 })
 
