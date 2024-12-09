@@ -19,8 +19,8 @@ exports.dashBoardStats = async (req, res) => {
         const TotalTasks = await model.task.count({
             include: [{
                 model: model.project,
-                where: { companyId: userId },
-                attributes: []
+                where: { companyId: company.id },
+                
             }]
         });
         if (period === 'daily') {

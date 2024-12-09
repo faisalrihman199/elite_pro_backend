@@ -2,55 +2,84 @@ const model = require("../models");
 const { Op } = require('sequelize');
 const sequelize = require('../config/db'); // Import your sequelize instance
 exports.getConversations = async (req, res) => {
-    try {
+  try {
       const userId = req.user.id;
-  
+
       // Step 1: Fetch conversations where the user is a participant
       const conversations = await model.conversation.findAll({
-        where: {
-          [Op.or]: [
-            { user1Id: userId },
-            { user2Id: userId },
-          ],
-        },
+          where: {
+              [Op.or]: [
+                  { user1Id: userId },
+                  { user2Id: userId },
+              ],
+          },
       });
-  
-      // Step 2: Fetch the last message for each conversation based on lastMessageId
+
+      // Step 2: Process each conversation
+      const processedConversations = [];
       for (let conversation of conversations) {
-        if (conversation.lastMessageId) {
-          // Fetch the last message based on lastMessageId
-          const lastMessage = await model.message.findOne({
-            where: { id: conversation.lastMessageId },
-          });
-  
-          console.log('Last message:', lastMessage ? lastMessage.dataValues.message : 'No message found');
-  
-          // Replace the lastMessageId with the message content in-memory (no need to save in DB if not needed)
-          if (lastMessage) {
-            conversation.lastMessageId = lastMessage.dataValues.message;
+          conversation = conversation.get({ plain: true }); // Convert Sequelize object to plain object
+          
+          // Fetch the last message
+          if (conversation.lastMessageId) {
+              const lastMessage = await model.message.findOne({
+                  where: { id: conversation.lastMessageId },
+              });
+              conversation.lastMessage = lastMessage ? lastMessage.message : null;
           } else {
-            conversation.lastMessageId = null;
+              conversation.lastMessage = null;
           }
-        } else {
-          // If there's no last message, set it as null
-          conversation.lastMessage = null;
-        }
+
+          // Identify the "other" user in the conversation
+          const otherUserId = conversation.user1Id === userId ? conversation.user2Id : conversation.user1Id;
+
+          // Fetch the other user's details
+          const otherUser = await model.user.findOne({
+              where: { id: otherUserId },
+          });
+
+          if (otherUser) {
+              if (otherUser.role === "admin") {
+                  // Fetch admin details
+                  const company = await model.company.findOne({ where: { userId: otherUserId } });
+                  conversation.otherUser = {
+                      name: company ? company.name : "Unknown Admin",
+                      profile_image: null, // Admins have no profile image
+                  };
+              } else {
+                  // Fetch employee details
+                  const employee = await model.employee.findOne({ where: { userId: otherUserId } });
+                  conversation.otherUser = {
+                      name: employee ? `${employee.firstName} ${employee.lastName}` : "Unknown Employee",
+                      profile_image: employee ? employee.profile_image : null,
+                  };
+              }
+          } else {
+              conversation.otherUser = {
+                  name: "Unknown User",
+                  profile_image: null,
+              };
+          }
+
+          // Add the processed conversation to the list
+          processedConversations.push(conversation);
       }
-  
-      // Step 3: Send the conversation data back to the client
+
+      // Step 3: Send the processed conversation data back to the client
       res.status(200).json({
-        success: true,
-        conversations,
+          success: true,
+          data: processedConversations,
       });
-    } catch (error) {
+  } catch (error) {
       console.error('Error fetching conversations:', error);
       res.status(500).json({
-        success: false,
-        message: 'Failed to fetch conversations',
+          success: false,
+          message: 'Failed to fetch conversations',
+          error: error.message,
       });
-    }
-  };
-  
+  }
+};
+
 
   exports.getConversationDetails = async (req, res) => {
     try {

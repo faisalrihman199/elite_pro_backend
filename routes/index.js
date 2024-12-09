@@ -6,6 +6,7 @@ var dashboard = require('./dashboard')
 var teams = require('./team')
 var employee = require('./employee')
 var modules = require('./modules')
+var project = require('./project')
 const controllers = require("../controllers");
 
 router.use('/chat',chat);
@@ -15,5 +16,6 @@ router.use('/dashboard',dashboard);
 router.use('/teams',teams);
 router.use('/employee',employee);
 router.use('/modules',modules);
+router.use('/project',project);
 
 module.exports = router;

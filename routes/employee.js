@@ -8,4 +8,5 @@ router.get('/getInfo',authmiddleware.authenticate('jwt', { session: false }),con
 router.get('/getEmployeeModules',authmiddleware.authenticate('jwt', { session: false }),controllers.employee.getAllEmployeeModulesPaginated);
 router.delete('/delete',authmiddleware.authenticate('jwt', { session: false }),controllers.employee.deleteEmployee);
 router.put('/updateProfile',authmiddleware.authenticate('jwt', { session: false }),uploadEmp.single('file'),controllers.employee.updateEmployee);
+router.get('/contactList',authmiddleware.authenticate('jwt', { session: false }),controllers.employee.getContactList);
 module.exports = router;

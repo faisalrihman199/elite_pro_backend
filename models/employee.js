@@ -38,6 +38,10 @@ const Employee = sequelize.define("employee", {
     status:{
         type: DataTypes.ENUM('active', 'inactive'),
         defaultValue: 'active',
+    },
+    dateOfBirth: {
+        type: DataTypes.DATEONLY, // Use DATEONLY for storing only the date (no time part)
+        allowNull: false,
     }
 })
 

@@ -1,3 +1,4 @@
+const { INTEGER } = require("sequelize/lib/data-types");
 const model = require("../models");
 const { Op } = require("sequelize");
 
@@ -480,6 +481,7 @@ exports.fetchTeamsForCompany = async (req, res) => {
               },
             ],
           });
+      
           if (!team) {
             return res.status(404).json({
               success: false,
@@ -488,22 +490,21 @@ exports.fetchTeamsForCompany = async (req, res) => {
           }
       
           // Fetch all tasks for the team
-          const allTasks = await model.task.findAll({
+          let allTasks = await model.task.findAll({
             include: [
               {
                 model: model.team,
                 through: { attributes: [] }, // Exclude intermediate table attributes
                 where: { id: teamId },
-                include:{
-                  model:model.employee
-
-                }
+                include: {
+                  model: model.employee,
+                },
               },
               {
                 model: model.modules,
-                include:{
-                  model:model.employee
-                }
+                include: {
+                  model: model.employee,
+                },
               },
             ],
           });
@@ -512,8 +513,31 @@ exports.fetchTeamsForCompany = async (req, res) => {
           const activeTasks = [];
           const pendingTasks = [];
           const runningTasks = [];
-      
           const currentDate = new Date();
+      
+          let totalTaskProgress = 0;
+          const taskProgresses = [];
+      
+          allTasks.forEach((task) => {
+            if (task.modules.length > 0) {
+              // Calculate the task progress percentage
+              const completedModules = task.modules.filter(
+                (module) => module.completionPercentage === "100"
+              ).length;
+              console.log("completedModules", completedModules);
+              let taskProgress = Math.round((completedModules / task.modules.length) * 100);
+
+              taskProgresses.push({ taskId: task.id, progress: taskProgress });
+              totalTaskProgress += taskProgress;
+              // taskProgresses = taskProgresses.map(progress => Math.round(progress));
+
+              // Attach the `progressPercentage` directly to the task object
+              task.setDataValue('progress', taskProgress);
+            } else {
+              // No modules: set progressPercentage to 0
+              task.setDataValue('progress', 0);
+            }
+          });
       
           allTasks.forEach((task) => {
             const hasCompletedModule = task.modules.some(
@@ -553,7 +577,7 @@ exports.fetchTeamsForCompany = async (req, res) => {
               totalActiveTasks,
               totalRunningTasks,
               runningTasks,
-              team
+              team,
             },
           });
         } catch (error) {

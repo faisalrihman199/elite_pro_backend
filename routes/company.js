@@ -26,5 +26,6 @@ router.get("/getAllTasks",authmiddleware.authenticate('jwt', { session: false })
 router.get("/getAllModules",authmiddleware.authenticate('jwt', { session: false }),controllers.user.getAllModulesPaginated);
 router.get("/getOneModule",authmiddleware.authenticate('jwt', { session: false }),controllers.user.getOneModule);
 router.get("/getUserData",authmiddleware.authenticate('jwt', { session: false }),controllers.user.getUserdata);
+router.put("/updateCompanyProfile",authmiddleware.authenticate('jwt', { session: false }),controllers.user.updateCompanyProfile);
 
 module.exports = router;

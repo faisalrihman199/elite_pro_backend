@@ -9,11 +9,19 @@ const storage = multer.diskStorage({
         try {
             // Get user ID (this assumes you're using authentication middleware that adds `req.user`)
             const userId = req.user.id;
-
-            const employee = await model.employee.findOne({ where: { userId } });
+            let company = null;
+            if(req.user.role === 'employee'){
+                const employee = await model.employee.findOne({ where: { userId } });
             
-            // Find the company by user ID
-            const company = await model.company.findOne({ where: { userId:employee.companyId } });
+                // Find the company by user ID
+                company = await model.company.findOne({ where: { userId:employee.companyId } });
+            }
+            else{
+                company = await model.company.findOne({ where: { userId } });
+            }
+
+
+            
             
             if (!company) {
                 return cb(new Error('Company not found'), false);

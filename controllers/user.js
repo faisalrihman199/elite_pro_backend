@@ -1561,6 +1561,7 @@ exports.getAllModulesPaginated = async (req, res) => {
             include: include,
             offset: offset,
             limit: pageSize,
+            attributes:["id","name","endDate","description","status","startDate"],
             order: [['startDate', 'DESC']] // Order by startDate
         });
 
@@ -1648,3 +1649,103 @@ exports.getUserdata = async (req, res) => {
            return res.status(200).json({ success: true, message: "User data fetched successfully", data: user2 });
     }
 }
+
+
+const updateCompany = async (req, res) => {
+  const user = req.user
+  if(user.role === "admin"){
+    const company = await model.company.findOne({where:{userId:user.id}})
+    if(!company){
+      return res.status(404).json({success:false,message:"Company not found"})
+    }
+    
+  }
+}
+
+
+exports.updateCompanyProfile = async (req, res) => {
+  const user = req.user;
+  
+  // Ensure the user has the correct role
+  if (user.role !== 'admin') {
+    return res.status(401).json({
+      success: false,
+      message: "You are not authorized to perform this action."
+    });
+  }
+
+  try {
+    // Find the associated user record
+    const userData = await model.user.findByPk(user.id);
+    if (!userData) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found."
+      });
+    }
+
+    // Find the associated company record
+    const company = await model.company.findOne({ where: { userId: user.id } });
+    if (!company) {
+      return res.status(404).json({
+        success: false,
+        message: "Company not found."
+      });
+    }
+
+    // Extract updatable fields from the request body
+    const { name, email, address, phone, password, website } = req.body;
+
+    let updatedCompanyData = {
+      name,
+      address,
+      phone,
+      website
+    };
+
+    let updatedUserData = {};
+
+    // If password is provided, hash it and add it to the user update
+    if (password) {
+      const hashedPassword = await bcrypt.hash(password, 10);
+      updatedUserData.password = hashedPassword;
+    }
+
+    // If email is provided, check if it's already taken and update it
+    if (email && email !== userData.email) {
+      const existingUser = await model.user.findOne({ where: { email } });
+      if (existingUser) {
+        return res.status(409).json({
+          success: false,
+          message: "Email is already taken by another user."
+        });
+      }
+      updatedUserData.email = email;
+    }
+
+    // Update user if there are any changes in email or password
+    if (Object.keys(updatedUserData).length > 0) {
+      await userData.update(updatedUserData);
+    }
+
+    // Update company profile with the updated data
+    await company.update(updatedCompanyData);
+
+    return res.status(200).json({
+      success: true,
+      message: "Company profile updated successfully.",
+      data: {
+        company,
+        user: userData
+      }
+    });
+
+  } catch (error) {
+    console.error("Error updating company profile:", error);
+    return res.status(500).json({
+      success: false,
+      message: "An error occurred while updating the company profile.",
+      error: error.message
+    });
+  }
+};

@@ -1,0 +1,140 @@
+import random
+import logging
+from sentence_transformers import SentenceTransformer, util
+import spacy
+
+# Logging setup for debugging
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(message)s")
+
+# Pre-defined FAQs with synonyms in keywords
+faq_data = [
+    {
+        "question": "How can I reserve a table using Dine3D?",
+        "answer": "Select your desired restaurant, choose the table, and confirm the reservation through the app.",
+        "keywords": ["reserve", "book", "table", "reservation"]
+    },
+    {
+        "question": "How do I create a 3D layout for my restaurant?",
+        "answer": "Log into Dine3D, go to 'Create Layout,' and use our intuitive tools to design your space in 3D.",
+        "keywords": ["create", "3d layout", "restaurant", "design"]
+    },
+    {
+        "question": "Can I edit a 3D layout after it’s published?",
+        "answer": "Yes, you can edit your layout anytime from the 'My Layouts' section.",
+        "keywords": ["edit", "3d layout", "update", "modify"]
+    },
+    {
+        "question": "What should I do if I face technical issues?",
+        "answer": "Contact our support team via the 'Help' section or email us at support@dine3d.com.",
+        "keywords": ["technical", "issue", "problem", "support"]
+    },
+    {
+        "question": "Can I customize the table availability times?",
+        "answer": "Yes, go to 'Settings' in your layout editor to manage table availability.",
+        "keywords": ["customize", "table", "availability", "time", "manage"]
+    },
+    {
+        "question": "Does Dine3D charge a fee for reservations?",
+        "answer": "No, Dine3D does not charge fees for table reservations.",
+        "keywords": ["charge", "fee", "reservation", "cost"]
+    },
+    {
+        "question": "How can I reset my password?",
+        "answer": "Click on 'Forgot Password' on the login page and follow the instructions.",
+        "keywords": ["reset", "password", "forgot", "recover"]
+    },
+    {
+        "question": "How do customers view my 3D layout?",
+        "answer": "Customers can view your layout directly on the app's booking page.",
+        "keywords": ["customer", "view", "3d layout", "see"]
+    },
+    {
+        "question": "Can I cancel or modify a reservation?",
+        "answer": "Yes, you can cancel or modify a reservation by going to your account's 'My Reservations' section.",
+        "keywords": ["cancel", "modify", "reservation", "change"]
+    },
+]
+
+# Greeting Responses
+greeting_responses = [
+    "Hello! How can I assist you with Dine3D today?",
+    "Hi there! Let me know how I can help you.",
+    "Greetings! How may I assist you today?",
+    "Hey! What can I do for you?",
+]
+
+# Load spaCy model for NLP tasks (e.g., lemmatization)
+nlp = spacy.load("en_core_web_sm")
+
+# Load Sentence-BERT model for semantic similarity
+sentence_model = SentenceTransformer("all-MiniLM-L6-v2")
+
+# Encode FAQ data into vector representations using Sentence-BERT
+faq_questions = [faq["question"] for faq in faq_data]
+faq_embeddings = sentence_model.encode(faq_questions, convert_to_tensor=True)
+
+# Extract keywords and lemmatize using spaCy
+def extract_keywords(text):
+    doc = nlp(text)
+    keywords = [token.lemma_.lower() for token in doc if token.pos_ in ["NOUN", "VERB", "ADJ"]]
+    return set(keywords)
+
+# Calculate semantic similarity between user input and FAQ data
+def get_best_match(user_input):
+    user_embedding = sentence_model.encode(user_input, convert_to_tensor=True)
+    cosine_scores = util.pytorch_cos_sim(user_embedding, faq_embeddings)[0]
+    best_match_idx = cosine_scores.argmax()  # Get the index of the highest cosine score
+    return faq_questions[best_match_idx], cosine_scores[best_match_idx]
+
+# Keyword-based fallback matching
+def keyword_match(user_keywords):
+    for faq in faq_data:
+        faq_keywords = set(faq["keywords"])
+        if user_keywords & faq_keywords:  # Check if any keyword matches
+            return faq["answer"]
+    return None
+
+# Chatbot Response based on AI and NLP
+def chatbot_response(user_input):
+    # Check if input is a greeting
+    greetings = ["hello", "hi", "hey", "good morning", "good evening", "good afternoon"]
+    if any(greet in user_input.lower() for greet in greetings):
+        logging.info(f"Greeting detected: {user_input}")
+        return random.choice(greeting_responses)
+
+    # Extract keywords from user input
+    user_keywords = extract_keywords(user_input)
+    logging.info(f"Extracted keywords: {user_keywords}")
+
+    # Get the best match for the FAQ using semantic similarity
+    best_match, score = get_best_match(user_input)
+    logging.info(f"Best match: {best_match}, Similarity score: {score:.2f}")
+
+    # If similarity score is high (threshold adjustable), return the matched FAQ answer
+    if score > 0.7:
+        matched_faq = next(faq for faq in faq_data if faq["question"] == best_match)
+        return matched_faq["answer"]
+
+    # Fallback to keyword matching
+    fallback_answer = keyword_match(user_keywords)
+    if fallback_answer:
+        return fallback_answer
+
+    # Fallback response if no good match is found
+    fallback_responses = [
+        "I'm sorry, I couldn't find an exact answer. Can you rephrase your question?",
+        "I didn't quite catch that. Could you try asking in another way?",
+        "I'm not sure about that. Please contact our support team at support@dine3d.com for more help."
+    ]
+    return random.choice(fallback_responses)
+
+# Test the chatbot
+if __name__ == "__main__":
+    print("Dine3D Chatbot (type 'exit' to quit)")
+    while True:
+        user_input = input("You: ")
+        if user_input.lower() == "exit":
+            print("Goodbye!")
+            break
+        response = chatbot_response(user_input)
+        print(f"Chatbot: {response}")
