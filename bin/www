@@ -368,6 +368,16 @@ const handleSendGroupMessage = async (senderId, groupChatId, content) => {
 
 
 
+function getSocketConnection(userId) {
+  return clients[userId]; // Returns the socket object for the given user ID
+}
+
+// Exporting functions at the end
+module.exports = {
+  getSocketConnection
+};
+
+
 server.listen(port);
 server.on('error', onError);
 server.on('listening', onListening);

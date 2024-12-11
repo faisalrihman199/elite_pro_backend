@@ -375,11 +375,21 @@ exports.getContactList = async (req, res) => {
             });
         }
 
-        // Return the employee data
+        // Modify the employee data to include the name and remove firstName and lastName
+        const modifiedEmployees = employees.map(employee => {
+            const employeeData = employee.get({ plain: true });
+            employeeData.name = `${employeeData.firstName} ${employeeData.lastName}`;
+            // Remove firstName and lastName
+            delete employeeData.firstName;
+            delete employeeData.lastName;
+            return employeeData;
+        });
+
+        // Return the modified employee data
         return res.status(200).json({
             success: true,
             message: "Contact list fetched successfully.",
-            data: employees,
+            data: modifiedEmployees,
         });
 
     } catch (error) {
@@ -394,3 +404,5 @@ exports.getContactList = async (req, res) => {
         });
     }
 };
+
+

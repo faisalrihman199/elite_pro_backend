@@ -281,6 +281,7 @@ exports.verifyEmployeeOTP = async (req, res) => {
 exports.companyAddEmployee = async (req, res) => {
   try {
     const authUser = req.user;
+    
 
     // Check if the authenticated user has admin privileges
     if (authUser.role !== "admin") {
@@ -309,10 +310,13 @@ exports.companyAddEmployee = async (req, res) => {
       lastName,
       address,
       phone,
+      dateOfBirth,
       designation,
       department,
       cnic,
     } = req.body;
+    console.log("Request :", req.body);
+    
 
     // Check if required fields are provided
     if (
@@ -322,6 +326,7 @@ exports.companyAddEmployee = async (req, res) => {
       !lastName ||
       !address ||
       !phone ||
+      !dateOfBirth ||
       !cnic
     ) {
       return res.status(400).json({
@@ -355,12 +360,12 @@ exports.companyAddEmployee = async (req, res) => {
     // Handle the uploaded profile image (if provided)
     let profileImagePath = null;
     if (req.file) {
-      // Get the relative path (exclude `public/` part)
+      // Get the relative path (exclude public/ part)
       const filePath = req.file.path; // This is the full path to the file
       profileImagePath = path.relative(
         path.join(__dirname, "../public"),
         filePath
-      ); // Excludes `public/` and saves the relative path
+      ); // Excludes public/ and saves the relative path
     }
 
     // Create a new user with role "employee"
@@ -377,6 +382,7 @@ exports.companyAddEmployee = async (req, res) => {
       lastName,
       address,
       phone,
+      dateOfBirth,
       designation,
       department,
       cnic,
@@ -398,7 +404,6 @@ exports.companyAddEmployee = async (req, res) => {
     });
   }
 };
-
 exports.addProjectForCompany = async (req, res) => {
   const {
     name,
@@ -1484,114 +1489,113 @@ exports.getAllTasksPaginated = async (req, res) => {
 
 
 exports.getAllModulesPaginated = async (req, res) => {
-    const user = req.user; // Get the user object
-    let { employeeId, page = 1, pageSize = 10 } = req.query;
-    page = parseInt(page, 10);
-    pageSize = parseInt(pageSize, 10);
-    const offset = (page - 1) * pageSize;
+  const user = req.user; // Get the user object
+  let { employeeId, page = 1, pageSize = 10 } = req.query;
+  page = parseInt(page, 10);
+  pageSize = parseInt(pageSize, 10);
+  const offset = (page - 1) * pageSize;
 
-    try {
-        // If the token belongs to an employee, override employeeId with the logged-in employee's ID
-        if (user.role === 'employee') {
-            const employee = await model.employee.findOne({ where: { userId: user.id } });
-            if (!employee) {
-                return res.status(404).json({ success: false, message: "Employee not found." });
-            }
-            employeeId = employee.id; // Force the employeeId to the logged-in employee
-        }
+  try {
+      // If the token belongs to an employee, override employeeId with the logged-in employee's ID
+      if (user.role === 'employee') {
+          const employee = await model.employee.findOne({ where: { userId: user.id } });
+          if (!employee) {
+              return res.status(404).json({ success: false, message: "Employee not found." });
+          }
+          employeeId = employee.id; // Force the employeeId to the logged-in employee
+      }
 
-        // Validate the provided employeeId for admin token
-        if (user.role === 'admin' && employeeId) {
-            const employee = await model.employee.findOne({ where: { id: employeeId } });
-            if (!employee) {
-                return res.status(404).json({ success: false, message: "Employee not found." });
-            }
-        }
+      // Validate the provided employeeId for admin token
+      if (user.role === 'admin' && employeeId) {
+          const employee = await model.employee.findOne({ where: { id: employeeId } });
+          if (!employee) {
+              return res.status(404).json({ success: false, message: "Employee not found." });
+          }
+      }
 
-        // If no employeeId is provided for admin, fetch modules for the entire company
-        let whereClause = {};
-        let include = [];
+      // If no employeeId is provided for admin, fetch modules for the entire company
+      let whereClause = {};
+      let include = [];
 
-        if (employeeId) {
-            // Fetch modules specific to an employee
-            include.push({
-                model: model.employee,
-                where: { id: employeeId }, // Join with employee table
-                attributes: [] // Exclude employee details from the result
-            });
-        } else if (user.role === 'admin') {
-            // Fetch modules for the admin's company
-            const company = await model.company.findOne({ where: { userId: user.id } });
-            if (!company) {
-                return res.status(404).json({ success: false, message: "Company not found for the user." });
-            }
+      if (employeeId) {
+          // Fetch modules specific to an employee
+          include.push({
+              model: model.employee,
+              where: { id: employeeId }, // Join with employee table
+              attributes: [] // Exclude employee details from the result
+          });
+      } else if (user.role === 'admin') {
+          // Fetch modules for the admin's company
+          const company = await model.company.findOne({ where: { userId: user.id } });
+          if (!company) {
+              return res.status(404).json({ success: false, message: "Company not found for the user." });
+          }
 
-            // Get all project IDs for the company
-            const projects = await model.project.findAll({
-                where: { companyId: company.id },
-                attributes: ['id'],
-                raw: true
-            });
+          // Get all project IDs for the company
+          const projects = await model.project.findAll({
+              where: { companyId: company.id },
+              attributes: ['id'],
+              raw: true
+          });
 
-            const projectIds = projects.map(project => project.id);
+          const projectIds = projects.map(project => project.id);
 
-            if (projectIds.length === 0) {
-                return res.status(404).json({ success: false, message: "No projects found for this company." });
-            }
+          if (projectIds.length === 0) {
+              return res.status(404).json({ success: false, message: "No projects found for this company." });
+          }
 
-            // Get all task IDs for the company's projects
-            const tasks = await model.task.findAll({
-                where: { projectId: { [Op.in]: projectIds } },
-                attributes: ['id'],
-                raw: true
-            });
+          // Get all task IDs for the company's projects
+          const tasks = await model.task.findAll({
+              where: { projectId: { [Op.in]: projectIds } },
+              attributes: ['id'],
+              raw: true
+          });
 
-            const taskIds = tasks.map(task => task.id);
+          const taskIds = tasks.map(task => task.id);
 
-            if (taskIds.length === 0) {
-                return res.status(404).json({ success: false, message: "No tasks found for this company." });
-            }
+          if (taskIds.length === 0) {
+              return res.status(404).json({ success: false, message: "No tasks found for this company." });
+          }
 
-            whereClause = { taskId: { [Op.in]: taskIds } }; // Filter by tasks
-        }
+          whereClause = { taskId: { [Op.in]: taskIds } }; // Filter by tasks
+      }
 
-        // Fetch paginated modules
-        const modules = await model.modules.findAll({
-            where: whereClause,
-            include: include,
-            offset: offset,
-            limit: pageSize,
-            attributes:["id","name","endDate","description","status","startDate"],
-            order: [['startDate', 'DESC']] // Order by startDate
-        });
+      // Fetch paginated modules
+      const modules = await model.modules.findAll({
+          where: whereClause,
+          include: include,
+          offset: offset,
+          limit: pageSize,
+          attributes:["id","name","endDate","completionPercentage","status","startDate","requirementFile","completionFile"],
+          order: [['startDate', 'DESC']] // Order by startDate
+      });
 
-        // Count total modules
-        const totalModules = await model.modules.count({
-            where: whereClause,
-            include: include
-        });
+      // Count total modules
+      const totalModules = await model.modules.count({
+          where: whereClause,
+          include: include
+      });
 
-        // Calculate total pages
-        const totalPages = Math.ceil(totalModules / pageSize);
+      // Calculate total pages
+      const totalPages = Math.ceil(totalModules / pageSize);
 
-        // Return paginated response
-        return res.status(200).json({
-            success: true,
-            message: "Modules fetched successfully.",
-            data: {
-                modules,
-                currentPage: page,
-                totalPages,
-                totalModules,
-                pageSize
-            }
-        });
-    } catch (error) {
-        console.error("Error fetching modules:", error);
-        return res.status(500).json({ success: false, message: "Internal Server Error" });
-    }
+      // Return paginated response
+      return res.status(200).json({
+          success: true,
+          message: "Modules fetched successfully.",
+          data: {
+              modules,
+              currentPage: page,
+              totalPages,
+              totalModules,
+              pageSize
+          }
+      });
+  } catch (error) {
+      console.error("Error fetching modules:", error);
+      return res.status(500).json({ success: false, message: "Internal Server Error" });
+  }
 };
-
 
 exports.getOneModule = async (req, res) => {
     const user = req.user;
