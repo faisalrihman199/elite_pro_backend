@@ -27,5 +27,8 @@ router.get("/getAllModules",authmiddleware.authenticate('jwt', { session: false 
 router.get("/getOneModule",authmiddleware.authenticate('jwt', { session: false }),controllers.user.getOneModule);
 router.get("/getUserData",authmiddleware.authenticate('jwt', { session: false }),controllers.user.getUserdata);
 router.put("/updateCompanyProfile",authmiddleware.authenticate('jwt', { session: false }),controllers.user.updateCompanyProfile);
+router.post("/adminCreateGroupChat",authmiddleware.authenticate('jwt', { session: false }),controllers.user.adminCreateGroupChat);
+router.post("/setManager",authmiddleware.authenticate('jwt', { session: false }),controllers.user.setManager);
+router.delete("/deleteTask",authmiddleware.authenticate('jwt', { session: false }),controllers.user.deleteTask);
 
 module.exports = router;

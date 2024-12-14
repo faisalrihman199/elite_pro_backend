@@ -1,6 +1,7 @@
 const Sequelize = require('sequelize');
 const model = require('../models');
 const bcrypt = require('bcrypt');
+const {Op} = require('sequelize');
 
 exports.getEmployeeInfo = async (req, res) => {
     const user = req.user;
@@ -28,7 +29,13 @@ exports.getEmployeeInfo = async (req, res) => {
                     model: model.team,
                     attributes: ['name'],
                 },
+                {
+                    model:model.user,
+                    attributes: ['email'],
+                    raw: true,
+                }
             ],
+            
         });
 
         if (!employee) {
@@ -78,11 +85,19 @@ exports.getEmployeeInfo = async (req, res) => {
             include: [{
                 model: model.employee,
                 where: { id: employeeId },
+            },
+            {
+                model: model.task, // Include the project model
+                attributes: ['projectId'], // Fetch only the project name
+                include:{
+                    model:model.project,
+                    attributes: ['name']
+                }
             }],
             where: {
                 [Sequelize.Op.and]: [
                     { completionPercentage: { [Sequelize.Op.lt]: 100 } }, // Less than 100
-                    { completionPercentage: { [Sequelize.Op.gt]: 0 } },   // Greater than 0
+                    // { completionPercentage: { [Sequelize.Op.gt]: 0 } },   // Greater than 0
                   ],
                 endDate: { [Sequelize.Op.gt]: new Date() }, // End date is not exceeded
             },
@@ -236,11 +251,15 @@ exports.deleteEmployee = async (req, res) => {
 
   
 
-exports.updateEmployee = async (req, res) => {
-    const user = req.user;
+  exports.updateEmployee = async (req, res) => {
+    const user = req.user; // Get the current logged-in user
+    const employeeId  = req.query.id; // Employee ID from query params (if admin)
 
-    // Ensure the user has the correct role
-    if (user.role !== 'employee') {
+    // If the user is admin, get the employeeId from the query, otherwise use the logged-in user's id
+    const idToUpdate = user.role === 'admin' && employeeId ? employeeId : user.id;
+
+    // Ensure the user has the correct role for the action
+    if (user.role !== 'employee' && user.role !== 'admin') {
         return res.status(403).json({
             success: false,
             message: "You do not have permission to perform this action."
@@ -249,7 +268,7 @@ exports.updateEmployee = async (req, res) => {
 
     try {
         // Find the associated user
-        const foundUser = await model.user.findOne({ where: { id: user.id } });
+        const foundUser = await model.user.findOne({ where: { id: idToUpdate } });
         if (!foundUser) {
             return res.status(404).json({
                 success: false,
@@ -258,7 +277,7 @@ exports.updateEmployee = async (req, res) => {
         }
 
         // Check if the new email already exists (if email is being updated)
-        const { email, password, firstName, lastName, designation, department, phone, address, cnic, status, dateOfBirth } = req.body;
+        let { email, password, firstName, lastName, designation, department, phone, address, cnic, status, dateOfBirth } = req.body;
 
         if (email && email !== foundUser.email) {
             // Check if the new email is already in use
@@ -293,14 +312,14 @@ exports.updateEmployee = async (req, res) => {
             dateOfBirth
         };
 
+        // If password is provided, hash and update it
         if (password) {
-            // Hash the new password if provided
             const hashedPassword = await bcrypt.hash(password, 10);
-            updatedData.password = hashedPassword;
+            updatedData.password = hashedPassword; // Only update password if provided
         }
 
+        // Handle the uploaded profile image (if provided)
         if (req.file) {
-            // Handle the uploaded profile image (if provided)
             const filePath = req.file.path; // This is the full path to the uploaded file
             const profileImagePath = path.relative(
                 path.join(__dirname, "../public"),
@@ -311,16 +330,13 @@ exports.updateEmployee = async (req, res) => {
 
         // Update user email if it has changed
         if (email && email !== foundUser.email) {
-            foundUser.email = email;
-            foundUser.password = updatedData.password// Update the email
-            await foundUser.save();  // Save the updated user email
-            
+            foundUser.email = email; // Update the email
         }
 
-        foundUser.password = updatedData.password// Update the email
-        await foundUser.save();  // Save the updated user email
+        // Save the updated user record (only once)
+        await foundUser.update(updatedData);
 
-        // Update employee details
+        // Update employee details (if necessary)
         await employee.update(updatedData);
 
         return res.status(200).json({
@@ -365,6 +381,14 @@ exports.getContactList = async (req, res) => {
         const employees = await model.employee.findAll({
             where: { companyId: company.id },
             attributes: ['id', 'firstName', 'lastName', 'profile_image', 'userId'],
+            include: [
+                {
+                    model: model.user,
+                    attributes: ['email'],
+                },
+                
+            ],
+            
         });
 
         // If no employees found, return a relevant message
@@ -405,4 +429,59 @@ exports.getContactList = async (req, res) => {
     }
 };
 
+exports.deleteMessage = async (req, res) => {
+    const user = req.user;
+    const messageId = req.query.id;
+
+    try {
+        // Fetch the message to be deleted
+        const message = await model.message.findOne({ where: { id: messageId } });
+        if (!message) {
+            return res.status(404).json({ success: false, message: "Message not found." });
+        }
+
+        // Fetch the conversation related to the message
+        const conversation = await model.conversation.findOne({
+            where: {
+                [Op.or]: [
+                    { user1Id: message.senderId, user2Id: message.receiverId },
+                    { user1Id: message.receiverId, user2Id: message.senderId }
+                ]
+            }
+        });
+
+        if (!conversation) {
+            return res.status(404).json({ success: false, message: "Conversation not found." });
+        }
+
+        // If the deleted message is the lastMessageId, we need to update it
+        if (conversation.lastMessageId === messageId) {
+            // Find the most recent message after the deleted one
+            const nextMessage = await model.message.findOne({
+                where: {
+                    conversationId: conversation.id,
+                    createdAt: { [Op.lt]: message.createdAt } // Get messages before the deleted message
+                },
+                order: [['createdAt', 'DESC']] // Get the most recent one
+            });
+
+            // If we found a next message, update lastMessageId to the most recent one
+            if (nextMessage) {
+                await conversation.update({ lastMessageId: nextMessage.id });
+            } else {
+                // If there is no next message, set lastMessageId to null or handle as needed
+                await conversation.update({ lastMessageId: null });
+            }
+        }
+
+        // Delete the message
+        await message.destroy();
+
+        return res.status(200).json({ success: true, message: "Message deleted successfully" });
+
+    } catch (error) {
+        console.error("Error deleting message:", error);
+        return res.status(500).json({ success: false, message: "Internal Server Error" });
+    }
+};
 

@@ -808,10 +808,11 @@ exports.addTaskToProject = async (req, res) => {
   
       // Validate project existence and ownership
       const existingProject = await model.project.findOne({
-
+        where: { id:projectId }, // Ensure the project belongs to the authenticated user's company
         include: {
           model: model.company,
-          where: { userId: authUser.id }, // Ensure the project belongs to the authenticated user's company
+          where: { userId: authUser.id },
+          
         },
       });
   
@@ -872,7 +873,8 @@ exports.addTaskToProject = async (req, res) => {
       } else {
         // Create new task
         const existingTask = await model.task.findOne({
-          where: { name },
+          where: { name, projectId },
+
         });
   
         if (existingTask) {
@@ -1412,79 +1414,92 @@ exports.addModuleForTask = async (req, res) => {
 
 
 exports.getAllTasksPaginated = async (req, res) => {
-    const user = req.user;
-    
-    // Check if the user is an admin
-    if (user.role !== 'admin') {
-        return res.status(401).json({ success: false, message: "You are not authorized to perform this action." });
-    }
+  const user = req.user;
 
-    try {
-        // Find the company associated with the admin
-        const company = await model.company.findOne({ where: { userId: user.id } });
+  // Check if the user is an admin
+  if (user.role !== 'admin') {
+      return res.status(401).json({ success: false, message: "You are not authorized to perform this action." });
+  }
 
-        if (!company) {
-            return res.status(404).json({ success: false, message: "Company not found for the user." });
-        }
+  try {
+      // Find the company associated with the admin
+      const company = await model.company.findOne({ where: { userId: user.id } });
 
-        // Get all project IDs associated with the company
-        const projects = await model.project.findAll({
-            where: { companyId: company.id },
-            attributes: ['id'], // Only fetch project IDs
-            raw: true
-        });
+      if (!company) {
+          return res.status(404).json({ success: false, message: "Company not found for the user." });
+      }
 
-        const projectIds = projects.map(project => project.id);
+      // Get all project IDs associated with the company
+      const projects = await model.project.findAll({
+          where: { companyId: company.id },
+          attributes: ['id'], // Only fetch project IDs
+          raw: true
+      });
 
-        if (projectIds.length === 0) {
-            return res.status(404).json({ success: false, message: "No projects found for this company." });
-        }
+      const projectIds = projects.map(project => project.id);
 
-        // Destructure pagination parameters from query (with defaults)
-        const { page = 1, limit = 10 } = req.query;
-        const offset = (page - 1) * limit;
-        const taskLimit = parseInt(limit, 10);
+      if (projectIds.length === 0) {
+          return res.status(404).json({ success: false, message: "No projects found for this company." });
+      }
 
-        // Get tasks for the company's projects, apply pagination
-        const tasks = await model.task.findAll({
-            attributes:['id', 'name', 'endDate'],
-            where: {
-                projectId: { [Op.in]: projectIds }
-            },
-            limit: taskLimit,
-            offset: offset,
-            order: [['createdAt', 'DESC']] // Optional: order by created date
-        });
+      // Destructure pagination parameters from query (with defaults)
+      const { page = 1, limit = 10 } = req.query;
+      const offset = (page - 1) * limit;
+      const taskLimit = parseInt(limit, 10);
 
-        // Count the total tasks for the company's projects
-        const totalTasks = await model.task.count({
-            where: {
-                projectId: { [Op.in]: projectIds }
-            }
-        });
+      // Get tasks for the company's projects, apply pagination
+      const tasks = await model.task.findAll({
+          attributes: ['id', 'name', 'endDate'],
+          where: {
+              projectId: { [Op.in]: projectIds }
+          },
+          include: [
+              {
+                  model: model.project,
+                  attributes: ['name'], // Include project name
+              }
+          ],
+          limit: taskLimit,
+          offset: offset,
+          order: [['createdAt', 'DESC']] // Optional: order by created date
+      });
 
-        // Calculate total pages
-        const totalPages = Math.ceil(totalTasks / taskLimit);
+      // Map tasks to include `projectName`
+      const tasksWithProjectName = tasks.map(task => ({
+          id: task.id,
+          name: task.name,
+          endDate: task.endDate,
+          projectName: task.project.name, // Extract project name
+      }));
 
-        // Return paginated tasks
-        return res.status(200).json({
-            success: true,
-            message: "Tasks fetched successfully.",
-            data: {
-                tasks,
-                
-                    currentPage: page,
-                    totalPages,
-                    totalTasks,
-                    limit: taskLimit
-                
-            }
-        });
-    } catch (error) {
-        console.error("Error fetching tasks:", error);
-        return res.status(500).json({ success: false, message: error.message });
-    }
+      // Count the total tasks for the company's projects
+      const totalTasks = await model.task.count({
+          where: {
+              projectId: { [Op.in]: projectIds }
+          }
+      });
+
+      // Calculate total pages
+      const totalPages = Math.ceil(totalTasks / taskLimit);
+
+      // Return paginated tasks
+      return res.status(200).json({
+          success: true,
+          message: "Tasks fetched successfully.",
+          data: {
+              tasks: tasksWithProjectName,
+              currentPage: page,
+              totalPages,
+              totalTasks,
+              limit: taskLimit
+          }
+      });
+  } catch (error) {
+      console.error("Error fetching tasks:", error);
+      return res.status(500).json({ success: false, message: "Internal Server Error" });
+  }
 };
+
 
 
 
@@ -1563,12 +1578,47 @@ exports.getAllModulesPaginated = async (req, res) => {
       // Fetch paginated modules
       const modules = await model.modules.findAll({
           where: whereClause,
-          include: include,
+          include: [
+              ...include,
+              {
+                  model: model.task,
+                  attributes: ["id","projectId"], // Fetch task ID and project ID
+                  include: [
+                      {
+                          model: model.project,
+                          attributes: ['name'] // Fetch project name
+                      }
+                  ]
+              }
+          ],
           offset: offset,
           limit: pageSize,
-          attributes:["id","name","endDate","completionPercentage","status","startDate","requirementFile","completionFile"],
+          attributes: [
+              "id",
+              "name",
+              "endDate",
+              "completionPercentage",
+              "status",
+              "startDate",
+              "requirementFile",
+              "completionFile"
+          ],
           order: [['startDate', 'DESC']] // Order by startDate
       });
+      console.log("modules", modules);
+      
+      // Map modules to include project name
+      const modulesWithProjectName = modules.map(module => ({
+          id: module.id,
+          name: module.name,
+          endDate: module.endDate,
+          completionPercentage: module.completionPercentage,
+          status: module.status,
+          startDate: module.startDate,
+          requirementFile: module.requirementFile,
+          completionFile: module.completionFile,
+          projectName: module.task?.project?.name // Include project name or default to "N/A"
+      }));
 
       // Count total modules
       const totalModules = await model.modules.count({
@@ -1584,7 +1634,7 @@ exports.getAllModulesPaginated = async (req, res) => {
           success: true,
           message: "Modules fetched successfully.",
           data: {
-              modules,
+              modules: modulesWithProjectName,
               currentPage: page,
               totalPages,
               totalModules,
@@ -1634,25 +1684,88 @@ exports.getOneModule = async (req, res) => {
 }
 
 exports.getUserdata = async (req, res) => {
-    const user = req.user;
-    const role = user.role;
-    if (role === "admin") {
-       const user1  = await model.user.findByPk(user.id, {
-        include:{
-            model:model.company,
-        }
-       })
-       return res.status(200).json({ success: true, message: "User data fetched successfully", data: user1 });
-    }
-    if (user.role === "employee") {
-        const user2  = await model.user.findByPk(user.id, {
-            include:{
-                model:model.employee,
-            }
-           })
-           return res.status(200).json({ success: true, message: "User data fetched successfully", data: user2 });
-    }
-}
+  const user = req.user;
+  const role = user.role;
+
+  try {
+      if (role === "admin") {
+          const employeeId = req.query.id; // Get the employeeId from query parameters
+
+          if (!employeeId) {
+              return res.status(400).json({ success: false, message: "Employee ID is required." });
+          }
+
+          // Fetch the employee record based on the employeeId
+          const employee = await model.employee.findOne({
+              where: { id: employeeId },
+              include: [{
+                  model: model.user,  // Include user details associated with the employee
+                 
+              }]
+          });
+
+          if (!employee) {
+              return res.status(404).json({ success: false, message: "Employee not found." });
+          }
+
+          // Check if the employee is associated with a company
+          if (!employee.companyId) {
+              return res.status(404).json({ success: false, message: "Employee does not belong to a company." });
+          }
+
+          // Fetch company details associated with the admin user
+          const company = await model.company.findOne({ where: { userId: user.id } });
+          if (!company) {
+              return res.status(404).json({ success: false, message: "Company not found." });
+          }
+
+          if (employee.companyId !== company.id) {
+              return res.status(404).json({ success: false, message: "Employee does not belong to your company." });
+          }
+
+          // Include both user and employee details and return the data
+          const employeeWithUserDetails = await model.employee.findOne({
+              where: { id: employeeId },
+              include: [
+                  {
+                      model: model.user,  // Include user details associated with the employee
+                     
+                  },
+                  {
+                      model: model.company,  // Include company details associated with the employee
+                     
+                  }
+              ]
+          });
+
+          return res.status(200).json({
+              success: true,
+              message: "User and employee data fetched successfully",
+              data: employeeWithUserDetails
+          });
+      }
+
+      if (role === "employee") {
+          // If the user is an employee, fetch their own data
+          const user2 = await model.user.findByPk(user.id, {
+              include: {
+                  model: model.employee, // Include employee details associated with the user
+              }
+          });
+
+          return res.status(200).json({
+              success: true,
+              message: "User data fetched successfully",
+              data: user2
+          });
+      }
+
+  } catch (error) {
+      console.error("Error fetching user data:", error);
+      return res.status(500).json({ success: false, message: "Internal Server Error" });
+  }
+};
+
 
 
 const updateCompany = async (req, res) => {
@@ -1753,3 +1866,134 @@ exports.updateCompanyProfile = async (req, res) => {
     });
   }
 };
+
+
+exports.adminCreateGroupChat = async (req, res) => {
+  try {
+    // Check if the user is an admin
+    const user = req.user;
+    if (user.role !== "admin") {
+      return res.status(401).json({ success: false, message: "You are not authorized to perform this action." });
+    }
+
+    // Destructure the required fields from the request body
+    const { name, employeeIds } = req.body;
+
+    // Validate the input fields
+    if (!name) {
+      return res.status(400).json({ success: false, message: "Group name is required" });
+    }
+
+    if (!employeeIds || !Array.isArray(employeeIds) || employeeIds.length === 0) {
+      return res.status(400).json({ success: false, message: "Employee IDs are required and should be an array" });
+    }
+
+    // Find the company associated with the admin
+    const company = await model.company.findOne({ where: { userId: user.id } });
+    if (!company) {
+      return res.status(404).json({ success: false, message: "Company not found" });
+    }
+
+    // Ensure that employeeIds are valid employee IDs in your database
+    const employees = await model.employee.findAll({ where: { id: employeeIds, companyId: company.id } });
+    if (employees.length !== employeeIds.length) {
+      return res.status(400).json({ success: false, message: "Some employee IDs are invalid or do not belong to the company" });
+    }
+
+    // Create the group chat (Assuming model.groupChat is the appropriate model)
+    const newGroupChat = await model.groupChat.create({
+      name,
+      companyId: company.id // Assuming the group chat is associated with the company
+    });
+
+    // Create group chat memberships for each employee
+    const memberships = employeeIds.map(employeeId => {
+      return {
+        groupChatId: newGroupChat.id,
+        employeeId: employeeId
+      };
+    });
+
+    // Insert group chat memberships
+    await model.groupChatMembership.bulkCreate(memberships);
+
+    // Respond with success message and created group chat
+    return res.status(201).json({ success: true, message: "Group chat created successfully", data: newGroupChat });
+
+  } catch (error) {
+    console.error("Error creating group chat:", error);
+    return res.status(500).json({ success: false, message: "Internal server error" });
+  }
+};
+
+exports.setManager = async (req, res) => {
+  const user = req.user;
+  const { employeeId } = req.query;
+
+  if (user.role !== "admin") {
+    return res.status(401).json({ success: false, message: "You are not authorized to perform this action." });
+  }
+
+  try {
+    const employee = await model.employee.findOne({ where: { id: employeeId } });
+    if (!employee) {
+      return res.status(404).json({ success: false, message: "Employee not found." });
+    }
+
+    const company = await model.company.findOne({ where: { userId: user.id } });
+    if (!company) {
+      return res.status(404).json({ success: false, message: "Company not found." });
+    }
+
+    if (employee.companyId !== company.id) {
+      return res.status(403).json({ success: false, message: "Employee does not belong to the company." });
+    }
+
+    const user = await model.user.findByPk(employee.userId);
+    if (!user) {
+      return res.status(404).json({ success: false, message: "User not found." });
+    }
+
+    user.role = "manager";
+    await user.save();
+
+    return res.status(200).json({ success: true, message: "User is now a manager." });
+  } catch (error) {
+    console.error("Error setting manager:", error);
+    return res.status(500).json({ success: false, message: "Internal server error" });
+  }
+}
+
+exports.deleteTask = async (req, res) => {
+  const user = req.user;
+  const { taskId } = req.query;
+
+  if (user.role !== "admin") {
+    return res.status(401).json({ success: false, message: "You are not authorized to perform this action." });
+  }
+
+  try {
+    const task = await model.task.findOne({ where: { id: taskId } });
+    if (!task) {
+      return res.status(404).json({ success: false, message: "Task not found." });
+    }
+
+    const company = await model.company.findOne({ where: { userId: user.id } });
+    if (!company) {
+      return res.status(404).json({ success: false, message: "Company not found." });
+    }
+
+    const project = await model.project.findOne({ where: { id: task.projectId } });
+    if (!project || project.companyId !== company.id) {
+      return res.status(403).json({ success: false, message: "You do not have access to this task." });
+    }
+
+    await task.destroy();
+
+    return res.status(200).json({ success: true, message: "Task deleted successfully." });
+  } catch (error) {
+    console.error("Error deleting task:", error);
+    return res.status(500).json({ success: false, message: "Internal server error" });
+  }
+}
+

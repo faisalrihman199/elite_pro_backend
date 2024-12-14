@@ -1,7 +1,7 @@
 const model = require("../models");
 const { Op } = require('sequelize');
 const sequelize = require('../config/db'); // Import your sequelize instance
-const { getSocketConnection } = require('../bin/www');
+// const { getSocketConnection } = require('../bin/www');
 exports.getConversations = async (req, res) => {
   try {
       const userId = req.user.id;
@@ -180,85 +180,136 @@ exports.getConversationDetails = async (req, res) => {
 };
 
 
-exports.updateMessageStatus = async (req, res) => {
-  let userId = req.user.id;
-  let { messageId } = req.body;
+exports.getGroupChats = async (req, res) => {
+    let user = req.user;  // Get user details from request
 
-  // Validate the incoming request data
-  if (!messageId) {
-    return res.status(400).json({
-      success: false,
-      message: "Message ID is required",
-    });
-  }
+    try {
+        let groupChats;
 
-  try {
-    // Step 1: Find the message by ID
-    let message = await model.message.findOne({ where: { id: messageId } });
+        // If the user is an admin, display all group chats
+        if (user.role === "admin") {
+            // Fetch all group chats for admin (no filtering needed)
+            groupChats = await model.groupChat.findAll();
+        } 
+        // If the user is an employee, fetch the group chats the employee is part of
+        else if (user.role === "employee") {
+            // Find the employee based on the logged-in user's ID
+            const employee = await model.employee.findOne({
+                where: { userId: user.id }
+            });
 
-    // Step 2: If message doesn't exist, return 400
-    if (!message) {
-      return res.status(404).json({
-        success: false,
-        message: "Message not found",
-      });
+            if (!employee) {
+                return res.status(404).json({ success: false, message: "Employee not found." });
+            }
+
+            // Fetch the group chat memberships for the employee
+            const groupChatMemberships = await model.groupChatMembership.findAll({
+                where: { employeeId: employee.id }
+            });
+
+            // Extract groupChatIds from the memberships
+            const groupChatIds = groupChatMemberships.map(membership => membership.groupChatId);
+
+            // Fetch the group chats where the employee is a member
+            groupChats = await model.groupChat.findAll({
+                where: { id: groupChatIds }
+            });
+        }
+
+        // Return the group chat data
+        return res.status(200).json({
+            success: true,
+            message: "Group chats fetched successfully.",
+            data: groupChats
+        });
+        
+    } catch (error) {
+        console.error("Error fetching group chats:", error);
+        return res.status(500).json({ success: false, message: "Internal Server Error" });
     }
-
-    // Step 3: If the message status is already 'read', skip update
-    if (message.status === "read") {
-      return res.status(200).json({
-        success: true,
-        message: "Message is already marked as read",
-      });
-    }
-
-    // Step 4: Update the message status to 'read'
-    await model.message.update(
-      { status: "read" },
-      { where: { id: messageId } }
-    );
-
-    // Step 5: Emit to the client (user) that the message status has been updated
-    // Assuming a system where all connected WebSocket clients are managed globally,
-    // and we broadcast an update to the relevant user.
-    // Emit the update through a global event or system.
-    emitToUser(userId, {
-      action: 'messageStatusUpdated',
-      messageId,
-      status: 'read',
-    });
-
-    // Step 6: Return success response
-    res.status(200).json({
-      success: true,
-      message: "Message status updated successfully",
-    });
-
-  } catch (error) {
-    // Log the error for debugging
-    console.error("Error updating message status:", error);
-
-    // Return a generic error message to the client
-    res.status(500).json({
-      success: false,
-      message: "An error occurred while updating the message status",
-      error: error.message,  // Optional: You can choose to log this as well for internal tracking
-    });
-  }
 };
 
-// Emit to the connected WebSocket client (you can implement this function as needed)
-function emitToUser(userId, message) {
-  // Assuming there's an event system or WebSocket server that listens and emits messages.
-  // This could be done using a message broker, socket.io, etc.
-  // You would access the connection in your WebSocket handler and broadcast it to the user.
+
+
+// exports.updateMessageStatus = async (req, res) => {
+//   let userId = req.user.id;
+//   let { messageId } = req.body;
+
+//   // Validate the incoming request data
+//   if (!messageId) {
+//     return res.status(400).json({
+//       success: false,
+//       message: "Message ID is required",
+//     });
+//   }
+
+//   try {
+//     // Step 1: Find the message by ID
+//     let message = await model.message.findOne({ where: { id: messageId } });
+
+//     // Step 2: If message doesn't exist, return 400
+//     if (!message) {
+//       return res.status(404).json({
+//         success: false,
+//         message: "Message not found",
+//       });
+//     }
+
+//     // Step 3: If the message status is already 'read', skip update
+//     if (message.status === "read") {
+//       return res.status(200).json({
+//         success: true,
+//         message: "Message is already marked as read",
+//       });
+//     }
+
+//     // Step 4: Update the message status to 'read'
+//     await model.message.update(
+//       { status: "read" },
+//       { where: { id: messageId } }
+//     );
+
+//     // Step 5: Emit to the client (user) that the message status has been updated
+//     // Assuming a system where all connected WebSocket clients are managed globally,
+//     // and we broadcast an update to the relevant user.
+//     // Emit the update through a global event or system.
+//     emitToUser(userId, {
+//       action: 'messageStatusUpdated',
+//       messageId,
+//       status: 'read',
+//     });
+
+//     // Step 6: Return success response
+//     res.status(200).json({
+//       success: true,
+//       message: "Message status updated successfully",
+//     });
+
+//   } catch (error) {
+//     // Log the error for debugging
+//     console.error("Error updating message status:", error);
+
+//     // Return a generic error message to the client
+//     res.status(500).json({
+//       success: false,
+//       message: "An error occurred while updating the message status",
+//       error: error.message,  // Optional: You can choose to log this as well for internal tracking
+//     });
+//   }
+// };
+
+// // Emit to the connected WebSocket client (you can implement this function as needed)
+// function emitToUser(userId, message) {
+//   // Assuming there's an event system or WebSocket server that listens and emits messages.
+//   // This could be done using a message broker, socket.io, etc.
+//   // You would access the connection in your WebSocket handler and broadcast it to the user.
   
-  // Example using socket.io (or any WebSocket library you're using):
-  console.log("func is ",getSocketConnection)
-  const socket = getSocketConnection(userId);  // Get the user's socket connection
-  if (socket) {
-    socket.emit('messageStatusUpdated', message);  // Emit the message to the client
-  } else {
-    console.warn(`User ${userId} is not connected`);
-  }
-}
+//   // Example using socket.io (or any WebSocket library you're using):
+//   console.log("func is ",getSocketConnection)
+//   const socket = getSocketConnection(userId);  // Get the user's socket connection
+//   if (socket) {
+//     socket.emit('messageStatusUpdated', message);  // Emit the message to the client
+//   } else {
+//     console.warn(`User ${userId} is not connected`);
+//   }
+// }

@@ -17,5 +17,6 @@ router.put(
 
 
 router.post("/addEmployeeToModule",authMiddleware.authenticate('jwt', { session: false }),controllers.modules.assignEmployeeToModule);
+router.delete("/deleteModule",authMiddleware.authenticate('jwt', { session: false }),controllers.modules.deleteModule);
 
 module.exports = router;

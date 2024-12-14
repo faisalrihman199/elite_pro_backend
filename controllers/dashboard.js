@@ -1207,7 +1207,7 @@ exports.moduleStats = async (req, res) => {
         const TotalActiveModules = await model.modules.count({
             where: {
                 taskId: { [Op.in]: taskIds },
-                status: 'active',
+                status: { [Op.not]: 'completed' }, // Exclude 'completed' status
                 ...(period !== 'all' && { createdAt: dateRange })
             }
         });

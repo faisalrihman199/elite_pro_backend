@@ -24,6 +24,11 @@ const Message = sequelize.define('message', {
     // Disable index creation
     index: false,
   },
+  file: {
+    type: DataTypes.ENUM('true', 'false'),
+    allowNull: false,
+    defaultValue: 'false', // Default value is 'false', indicating it's a text message unless specified as a file
+  },
   message: {
     type: DataTypes.TEXT,
     allowNull: false

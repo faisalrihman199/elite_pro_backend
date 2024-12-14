@@ -10,6 +10,7 @@ var app = require('../app');
 var debug = require('debug')('aps-emp-sys:server');
 var http = require('http');
 var db = require('../config/db')
+const cloudinary = require('../config/cloudinary'); // Cloudinary config
 const WebSocket = require('ws');
 const model = require('../models')
 const jwt = require('jsonwebtoken'); // For token validation
@@ -98,20 +99,32 @@ wss.on('connection', async (ws, req) => {
 
   // Handle incoming messages
   ws.on('message', async (data) => {
-    try {
-      const { action, content, senderId, receiverId, groupChatId } = JSON.parse(data);
+  try {
+    const { action, content,file, senderId, receiverId, groupChatId } = JSON.parse(data);
 
-      if (action === 'sendMessage') {
-        if (groupChatId) {
-          await handleSendGroupMessage(senderId, groupChatId, content);
+    if (action === 'sendMessage') {
+      // Check if the message is for a group chat or a private message
+      if (groupChatId) {
+        // Handle sending group message
+        await handleSendGroupMessage(senderId, groupChatId, content);
+      } else {
+        // Check if the message content includes a file
+        if (file) {
+          // Handle sending a message with a file
+          console.log("in file handler");
+          
+          await handleSendMessageWithFile(senderId, receiverId, file);
         } else {
+          // Handle sending a text message
           await handleSendMessage(senderId, receiverId, content);
         }
       }
-    } catch (error) {
-      console.error('Invalid message format:', error);
     }
-  });
+  } catch (error) {
+    console.error('Invalid message format:', error);
+  }
+});
+
 
   // Handle client disconnection
   ws.on('close', async () => {
@@ -304,6 +317,92 @@ const handleSendMessage = async (senderId, receiverId, content) => {
     console.error('Error handling message:', error);
   }
 };
+
+const handleSendMessageWithFile = async (senderId, receiverId, file) => {
+  try {
+    // Step 1: Check if the conversation already exists
+    let conversation = await model.conversation.findOne({
+      where: {
+        [Op.or]: [
+          { user1Id: senderId, user2Id: receiverId },
+          { user1Id: receiverId, user2Id: senderId },
+        ],
+      },
+    });
+
+    // Step 2: If no conversation exists, create a new one
+    if (!conversation) {
+      conversation = await model.conversation.create({
+        user1Id: senderId,
+        user2Id: receiverId,
+      });
+    }
+
+    // Step 3: Check the recipient's last seen status
+    const recipient = await model.user.findOne({
+      where: { id: receiverId },
+      attributes: ['last_seen'], // Only fetch the last_seen field
+    });
+
+    // Determine the message status based on recipient's online status
+    const messageStatus = recipient?.last_seen === 'Online' ? 'delivered' : 'sent';
+    console.log(`message status is ${messageStatus}`);
+
+    // Step 4: Upload the file to Cloudinary
+    let messageContent
+    let fileUrl = null;
+
+    if (file) {
+      // Upload file to Cloudinary and get the URL
+      const uploadResponse = await cloudinary.uploader.upload(file, {
+        resource_type: 'auto', // Auto-detect file type (image, audio, etc.)
+      });
+      fileUrl = uploadResponse.secure_url; // Store the file URL
+      //console.log('Uploaded file URL:', uploadResponse.secure_url);
+      messageContent = fileUrl;  // Set the message content to the file URL
+    }
+
+    // Step 5: Create a new message with the appropriate status and content (text or file)
+    const message = await model.message.create({
+      message: messageContent,
+      senderId,
+      receiverId,
+      conversationId: conversation.id,
+      status: messageStatus, // Set status based on recipient's last_seen,
+      file:"true"
+    });
+
+    // Step 6: Update the conversation's lastMessageId with the new message ID
+    const updatedconv = await model.conversation.update(
+      { lastMessageId: message.id },
+      { where: { id: conversation.id } }
+    );
+
+    console.log("Updated conversation:", updatedconv);
+
+    // Step 7: Notify the receiver if they are online (i.e., connected via WebSocket)
+    if (clients[receiverId]) {
+      clients[receiverId].send(
+        JSON.stringify({ action: 'receiveMessage', message })
+      );
+    }
+
+    // Optionally, notify the sender that the message was sent
+    if (clients[senderId]) {
+      clients[senderId].send(
+        JSON.stringify({ action: 'messageSent', message })
+      );
+    }
+
+    // Log the message status for debugging
+    console.log(
+      `Message sent from user ${senderId} to user ${receiverId} with status '${messageStatus}'`
+    );
+  } catch (error) {
+    console.error('Error handling message with file:', error);
+  }
+};
+
 
 
 const handleSendGroupMessage = async (senderId, groupChatId, content) => {

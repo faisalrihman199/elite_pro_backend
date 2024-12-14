@@ -493,21 +493,32 @@ exports.fetchTeamsForCompany = async (req, res) => {
           let allTasks = await model.task.findAll({
             include: [
               {
-                model: model.team,
-                through: { attributes: [] }, // Exclude intermediate table attributes
-                where: { id: teamId },
-                include: {
-                  model: model.employee,
+                model: model.project, // Include project model to fetch project name
+                attributes: ['name'], // Only fetch project name
+            },
+                {
+                    model: model.team,
+                    through: { attributes: [] }, // Exclude intermediate table attributes
+                    where: { id: teamId },
+                    include: [
+                        {
+                            model: model.employee,
+                        },
+                    ],
                 },
-              },
-              {
-                model: model.modules,
-                include: {
-                  model: model.employee,
+                {
+                    model: model.modules,
+                    include: {
+                        model: model.employee,
+                    },
                 },
-              },
+                {
+                    model: model.project, // Include project model to fetch project name
+                    attributes: ['name'], // Only fetch project name
+                },
             ],
-          });
+        });
+        
       
           // Separate tasks into `active`, `pending`, and `running` categories
           const activeTasks = [];
