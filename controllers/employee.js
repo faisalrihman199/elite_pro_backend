@@ -253,11 +253,29 @@ exports.deleteEmployee = async (req, res) => {
 
   exports.updateEmployee = async (req, res) => {
     const user = req.user; // Get the current logged-in user
-    const employeeId  = req.query.id; // Employee ID from query params (if admin)
+    let employeeId = req.query.id; // Employee ID from query params (if admin)
 
     // If the user is admin, get the employeeId from the query, otherwise use the logged-in user's id
-    const idToUpdate = user.role === 'admin' && employeeId ? employeeId : user.id;
+    if(user.role === 'admin') {
+        if(!employeeId) {
+            return res.status(400).json({
+                success: false,
+                message: "Employee ID is required for admin users."
+            });
+        }
 
+    } else if(user.role === 'employee') {
+        const employee = await model.employee.findOne({ where: { userId: user.id } });
+        if (!employee) {
+            return res.status(404).json({ success: false, message: "Employee not found." });
+        }
+        employeeId = employee.id;
+    }
+
+    const idToUpdate = employeeId;
+    const employee = await model.employee.findOne({ where: { id: idToUpdate } });
+    const userId=employee.userId;
+    
     // Ensure the user has the correct role for the action
     if (user.role !== 'employee' && user.role !== 'admin') {
         return res.status(403).json({
@@ -268,7 +286,7 @@ exports.deleteEmployee = async (req, res) => {
 
     try {
         // Find the associated user
-        const foundUser = await model.user.findOne({ where: { id: idToUpdate } });
+        const foundUser = await model.user.findOne({ where: { id: userId } });
         if (!foundUser) {
             return res.status(404).json({
                 success: false,
@@ -276,13 +294,23 @@ exports.deleteEmployee = async (req, res) => {
             });
         }
 
-        // Check if the new email already exists (if email is being updated)
+        // If the user is an employee and they are trying to update their own data
+        if (user.role === 'employee' && user.id !== foundUser.id) {
+            return res.status(403).json({
+                success: false,
+                message: "You do not have permission to update another user's data."
+            });
+        }
+
+
+        // Get the updated details from the request body
         let { email, password, firstName, lastName, designation, department, phone, address, cnic, status, dateOfBirth } = req.body;
 
+        // Check if email is provided and ensure it's different from the current email
         if (email && email !== foundUser.email) {
-            // Check if the new email is already in use
+            // Check if the new email is already in use by another user (excluding the current user)
             const existingUser = await model.user.findOne({ where: { email } });
-            if (existingUser) {
+            if (existingUser && existingUser.id !== foundUser.id) {
                 return res.status(409).json({
                     success: false,
                     message: "Email is already taken by another user."
@@ -353,6 +381,9 @@ exports.deleteEmployee = async (req, res) => {
         });
     }
 };
+
+
+
 
 
 exports.getContactList = async (req, res) => {

@@ -8,4 +8,5 @@ router.get('/getConversations',authmiddleware.authenticate('jwt', { session: fal
 router.get('/getOneConversation/:conversationId',authmiddleware.authenticate('jwt', { session: false }),controllers.chat.getConversationDetails);
 // router.put('/updateMessageStatus',authmiddleware.authenticate('jwt', { session: false }),controllers.chat.updateMessageStatus);
 router.get("/getGroupChats",authmiddleware.authenticate('jwt', { session: false }),controllers.chat.getGroupChats);
+router.get("/getGroupChat",authmiddleware.authenticate('jwt', { session: false }),controllers.chat.getGroupChatDetails);
 module.exports = router;

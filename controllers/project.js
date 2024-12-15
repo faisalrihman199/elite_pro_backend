@@ -13,7 +13,7 @@ exports.deleteProject = async (req, res) => {
     }
   
     try {
-      const company = await model.company.findOne({ where: { id: user.id } });
+      const company = await model.company.findOne({ where: { userId: user.id } });
   
       // Ensure the company exists
       if (!company) {

@@ -74,6 +74,8 @@ exports.moduleProgress = async (req, res) => {
           // Handle file uploads
           if (req.files) {
               const { progressFile, completionFile } = req.files;
+              console.log("progressFile", progressFile);
+                console.log("completionFile", completionFile);
 
               // Function to get relative path
               const getRelativePath = (filePath) => filePath.split("public")[1]; // Get the part after "public"

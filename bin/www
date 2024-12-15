@@ -94,37 +94,61 @@ wss.on('connection', async (ws, req) => {
   }
   await updateMessageStatusToDelivered(clientId);
 
+
+  // Fetch and send all notifications
+  const notifications = await model.notification.findAll({
+    where: { userId: clientId }, // Get notifications for the specific user
+    attributes: ['notificationType', 'content', 'status', 'createdAt'], // Include desired fields
+    order: [['createdAt', 'DESC']], // Order by newest first
+  });
+
+  if (notifications.length > 0) {
+    ws.send(JSON.stringify({
+      action: 'notifications',
+      message: `You have ${notifications.length} notifications.`,
+      data: notifications
+    }));
+  } else {
+    ws.send(JSON.stringify({
+      action: 'notifications',
+      message: 'You have no notifications.',
+      data: []
+    }));
+  }
+
   // Send acknowledgment to the client
   ws.send(JSON.stringify({ message: 'Connected to WebSocket server', clientId }));
 
   // Handle incoming messages
   ws.on('message', async (data) => {
-  try {
-    const { action, content,file, senderId, receiverId, groupChatId } = JSON.parse(data);
-
-    if (action === 'sendMessage') {
-      // Check if the message is for a group chat or a private message
-      if (groupChatId) {
-        // Handle sending group message
-        await handleSendGroupMessage(senderId, groupChatId, content);
-      } else {
-        // Check if the message content includes a file
-        if (file) {
-          // Handle sending a message with a file
-          console.log("in file handler");
-          
-          await handleSendMessageWithFile(senderId, receiverId, file);
+    try {
+      const { action, content, file, senderId, receiverId, groupChatId } = JSON.parse(data);
+  
+      if (action === 'sendMessage') {
+        // Check if the message is for a group chat or a private message
+        if (groupChatId) {
+          if (file) {
+            // Handle sending group message with a file
+            await handleSendGroupMessageWithFile(senderId, groupChatId, file);
+          } else {
+            // Handle sending a text group message
+            await handleSendGroupMessage(senderId, groupChatId, content);
+          }
         } else {
-          // Handle sending a text message
-          await handleSendMessage(senderId, receiverId, content);
+          if (file) {
+            // Handle sending a private message with a file
+            await handleSendMessageWithFile(senderId, receiverId, file);
+          } else {
+            // Handle sending a private text message
+            await handleSendMessage(senderId, receiverId, content);
+          }
         }
       }
+    } catch (error) {
+      console.error('Invalid message format:', error);
     }
-  } catch (error) {
-    console.error('Invalid message format:', error);
-  }
-});
-
+  });
+  
 
   // Handle client disconnection
   ws.on('close', async () => {
@@ -409,20 +433,26 @@ const handleSendGroupMessage = async (senderId, groupChatId, content) => {
 
   try {
 
-    const user = await model.user.findOne({
+    let user = await model.user.findOne({
       where: { id: senderId },
      
     });
-    const company = await model.company.findOne({
-      where: { userId: user.id },
-    });
+    console.log("user is ", user);
+    user = user.get({ plain: true });
+    console.log("user is ", user);
+    
+    
+    // const company = await model.company.findOne({
+    //   where: { userId: user.id },
+    // });
     
     const employee = await model.employee.findOne({
-      where: { companyId: company.id },
+      where: { userId: user.id },
       attributes: ['id'],
     });
 
-
+     console.log("employee is ", employee);
+     
     // Check if sender is part of the group
     const membership = await model.groupChatMembership.findOne({
       where: { groupChatId, employeeId: employee.id },
@@ -444,12 +474,102 @@ const handleSendGroupMessage = async (senderId, groupChatId, content) => {
     // Notify all group members
     const members = await model.groupChatMembership.findAll({
       where: { groupChatId },
-      attributes: ['employeeId'],
+      include: [
+        {
+          model: model.employee,
+          attributes: ['userId'], // Fetch the userId from the employee model
+        },
+      ],
+      attributes: [], // No additional attributes from groupChatMembership
+    });
+    
+    // Iterate through the members and notify users via their userId
+    members.forEach(({ employee }) => {
+      if (employee?.userId && clients[employee.userId]) {
+        clients[employee.userId].send(
+          JSON.stringify({
+            action: 'receiveGroupMessage',
+            groupChatId,
+            message,
+          })
+        );
+      }
+    });
+    
+
+    console.log(`Message sent to group chat ${groupChatId} by user ${senderId}`);
+  } catch (error) {
+    console.error('Error handling group message:', error);
+  }
+};
+
+const handleSendGroupMessageWithFile = async (senderId, groupChatId, file) => {
+  try {
+    // Step 1: Fetch the user and their corresponding employee record
+    let user = await model.user.findOne({
+      where: { id: senderId },
     });
 
-    members.forEach(({ employeeId }) => {
-      if (clients[employeeId]) {
-        clients[employeeId].send(
+    if (!user) {
+      console.error(`User ${senderId} not found.`);
+      return;
+    }
+
+    user = user.get({ plain: true });
+
+    const employee = await model.employee.findOne({
+      where: { userId: user.id },
+      attributes: ['id'],
+    });
+
+    if (!employee) {
+      console.error(`Employee record not found for user ${senderId}.`);
+      return;
+    }
+
+    // Step 2: Check if the sender is part of the group
+    const membership = await model.groupChatMembership.findOne({
+      where: { groupChatId, employeeId: employee.id },
+    });
+
+    if (!membership) {
+      console.error(`User ${senderId} is not part of group chat ${groupChatId}`);
+      return;
+    }
+
+    // Step 3: Upload the file to Cloudinary
+    let fileUrl = null;
+    if (file) {
+      const uploadResponse = await cloudinary.uploader.upload(file, {
+        resource_type: 'auto', // Auto-detect file type (image, audio, etc.)
+      });
+      fileUrl = uploadResponse.secure_url; // Store the uploaded file URL
+    }
+
+    // Step 4: Create a new group message with the file URL as content
+    const message = await model.groupChatMessage.create({
+      groupChatId,
+      senderId: employee.id,
+      message: fileUrl || '', // Use the file URL or an empty string if no file
+      status: 'sent', // Initial status
+      isFile: !!fileUrl, // Flag to indicate if the message contains a file
+    });
+
+    // Step 5: Notify all group members
+    const members = await model.groupChatMembership.findAll({
+      where: { groupChatId },
+      include: [
+        {
+          model: model.employee,
+          attributes: ['userId'], // Fetch the userId from the employee model
+        },
+      ],
+      attributes: [], // No additional attributes from groupChatMembership
+    });
+
+    members.forEach(({ employee }) => {
+      if (employee?.userId && clients[employee.userId]) {
+        clients[employee.userId].send(
           JSON.stringify({
             action: 'receiveGroupMessage',
             groupChatId,
@@ -459,12 +579,11 @@ const handleSendGroupMessage = async (senderId, groupChatId, content) => {
       }
     });
 
-    console.log(`Message sent to group chat ${groupChatId} by user ${senderId}`);
+    console.log(`File sent to group chat ${groupChatId} by user ${senderId}`);
   } catch (error) {
-    console.error('Error handling group message:', error);
+    console.error('Error handling group message with file:', error);
   }
 };
-
 
 
 function getSocketConnection(userId) {

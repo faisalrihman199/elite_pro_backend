@@ -8,6 +8,7 @@ const fs = require("fs");
 const User = require("../models/user");
 const { Op } = require("sequelize");
 const Sequelize = require("sequelize");
+const { log } = require("console");
 
 require("dotenv").config();
 exports.addCompany = async (req, res) => {
@@ -793,7 +794,8 @@ exports.addTaskToProject = async (req, res) => {
       teamId,
     } = req.body;
     const  taskId  = req.query.id; // Get taskId from params if it's provided
-  
+   
+    
     try {
       const status1 = status || "active";
   
@@ -805,6 +807,7 @@ exports.addTaskToProject = async (req, res) => {
           message: "Team not found.",
         });
       }
+      
   
       // Validate project existence and ownership
       const existingProject = await model.project.findOne({
@@ -857,7 +860,12 @@ exports.addTaskToProject = async (req, res) => {
         if (!existingAssignment || existingAssignment.teamId !== teamId) {
           // Update or create `teamTaskAssignment`
           if (existingAssignment) {
-            await existingAssignment.update({ teamId });
+            
+            await model.teamTaskAssignment.update(
+              { teamId }, 
+              { where: { taskId } }
+            );
+            
           } else {
             await model.teamTaskAssignment.create({ teamId, taskId });
           }
@@ -1354,13 +1362,11 @@ exports.addModuleForTask = async (req, res) => {
         endDate,
       });
 
-      const existingMembership = await model.employeeModuleAssignment.findOne({
-        where: { moduleId },
-      });
-      if (existingMembership && existingMembership.employeeId !== employeeId) {
-        await existingMembership.update({ employeeId });
-      }
-
+      
+      const updatedMembership = await model.employeeModuleAssignment.update(
+        { employeeId: employeeId }, 
+        { where: { moduleId } }
+      );
       return res.status(200).json({
         success: true,
         message: "Module updated successfully.",
@@ -1686,65 +1692,41 @@ exports.getOneModule = async (req, res) => {
 exports.getUserdata = async (req, res) => {
   const user = req.user;
   const role = user.role;
-
+  const employeeId = req.query.id;
   try {
-      if (role === "admin") {
-          const employeeId = req.query.id; // Get the employeeId from query parameters
-
-          if (!employeeId) {
-              return res.status(400).json({ success: false, message: "Employee ID is required." });
-          }
-
-          // Fetch the employee record based on the employeeId
-          const employee = await model.employee.findOne({
-              where: { id: employeeId },
-              include: [{
-                  model: model.user,  // Include user details associated with the employee
-                 
-              }]
-          });
-
+      if (role === "admin" && employeeId) {
+          const employee = await model.employee.findOne({ where: { id: employeeId } });
           if (!employee) {
               return res.status(404).json({ success: false, message: "Employee not found." });
           }
 
-          // Check if the employee is associated with a company
-          if (!employee.companyId) {
-              return res.status(404).json({ success: false, message: "Employee does not belong to a company." });
-          }
-
-          // Fetch company details associated with the admin user
-          const company = await model.company.findOne({ where: { userId: user.id } });
-          if (!company) {
-              return res.status(404).json({ success: false, message: "Company not found." });
-          }
-
-          if (employee.companyId !== company.id) {
-              return res.status(404).json({ success: false, message: "Employee does not belong to your company." });
-          }
-
-          // Include both user and employee details and return the data
-          const employeeWithUserDetails = await model.employee.findOne({
-              where: { id: employeeId },
-              include: [
-                  {
-                      model: model.user,  // Include user details associated with the employee
-                     
-                  },
-                  {
-                      model: model.company,  // Include company details associated with the employee
-                     
-                  }
-              ]
-          });
-
+          const employeeWithUserDetails = await model.user.findByPk(employee.userId, {
+              include: {
+                  model: model.employee, // Include employee details associated with the user
+              }
+            } );
+          
           return res.status(200).json({
               success: true,
               message: "User and employee data fetched successfully",
               data: employeeWithUserDetails
           });
       }
+      else if(role === "admin" && !employeeId){
+        const admin= await model.user.findByPk(user.id, {
+          include: {
+              model: model.company, // Include company details associated with the user
+          }
+        });
+        return res.status(200).json({
+          success: true,
+          message: "User and company data fetched successfully",
+          data: admin
+      });
+      }
+    
 
+        
       if (role === "employee") {
           // If the user is an employee, fetch their own data
           const user2 = await model.user.findByPk(user.id, {
